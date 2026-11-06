@@ -38,6 +38,35 @@
   .chip b { font-weight:800; } .chip .px { color:var(--muted); }
   .chip .x { width:18px; height:18px; line-height:17px; text-align:center; border-radius:50%; color:var(--muted); font-size:14px; }
   .chip .x:hover { background:#2a313b; color:#fff; }
+  select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; font:600 12px Inter,sans-serif; max-width:170px; }
+  nav button.addtab { color:var(--muted); border-style:dashed; }
+  nav input#newlist { width:150px; border-radius:999px; align-self:center; }
+  #panel { display:none; position:absolute; inset:0; overflow:auto; background:#0b0d10; padding:14px 16px 40px; }
+  #panel h2 { font-size:12px; margin:22px 0 8px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:#b8c1cc; }
+  #panel h2:first-child { margin-top:0; }
+  .pills { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; align-items:center; }
+  .pill { padding:5px 11px; border-radius:999px; border:1px solid var(--line); background:var(--panel); font:600 12px Inter,sans-serif; color:#c4ccd6; cursor:pointer; }
+  .pill.on { background:#e8ecf1; color:#0f1216; border-color:#e8ecf1; }
+  .pill small { font-weight:400; opacity:.7; margin-left:5px; }
+  .chk { font-size:12px; color:var(--muted); display:flex; gap:5px; align-items:center; cursor:pointer; margin-left:10px; }
+  .tblwrap { overflow-x:auto; }
+  table.t { width:100%; border-collapse:collapse; font-size:12.5px; font-variant-numeric:tabular-nums; }
+  table.t th { text-align:left; color:var(--muted); font-weight:600; font-size:11px; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.t td { padding:7px 8px; border-bottom:1px solid #161b22; white-space:nowrap; }
+  table.t td.n { max-width:280px; overflow:hidden; text-overflow:ellipsis; color:#c9d0da; }
+  table.t th.r, table.t td.r { text-align:right; }
+  table.t tbody tr:hover td { background:#11151a; }
+  .tk { font-weight:800; cursor:pointer; } .tk:hover { text-decoration:underline; }
+  .star { cursor:pointer; color:#4a5562; width:22px; text-align:center; user-select:none; } .star.on { color:#ffd84d; } .star:hover { color:#ffd84d; }
+  .up { color:#6fd6b8; } .dn { color:#ff6b66; } .mut { color:var(--muted); }
+  .nrow { display:flex; gap:12px; align-items:baseline; padding:9px 2px; border-bottom:1px solid #161b22; }
+  .nrow a { color:var(--text); text-decoration:none; font-weight:600; font-size:14px; line-height:1.35; } .nrow a:hover { text-decoration:underline; }
+  .nrow .tm { color:var(--muted); font-size:11px; width:52px; flex:none; text-align:right; font-variant-numeric:tabular-nums; }
+  .tag { font-size:10px; color:var(--muted); border:1px solid var(--line); padding:1px 7px; border-radius:999px; flex:none; }
+  .mention { color:#ffd84d; font-size:11px; flex:none; font-weight:600; }
+  .srcs { margin-top:26px; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); line-height:2; }
+  .srcs a { color:#9fb4cc; margin-right:16px; white-space:nowrap; }
+  .note { color:var(--muted); font-size:11.5px; margin:4px 0 10px; }
   #empty { display:none; pointer-events:none; }
   #wrap { position:relative; flex:1; min-height:300px; margin:8px; border-radius:10px; overflow:hidden; background:#0b0d10; touch-action:none; }
   canvas { display:block; width:100%; height:100%; cursor:grab; }
@@ -71,7 +100,10 @@
 </header>
 <nav id="tabs"></nav>
 <div id="wl">
-  <span class="wl-label">★ Watchlist</span>
+  <span class="wl-label">★ List</span>
+  <select id="listsel" title="Which watchlist you are editing"></select>
+  <button id="renlist" type="button" title="Rename this list">Rename</button>
+  <button id="dellist" type="button" title="Delete this list">Delete</button>
   <form id="wlform" autocomplete="off">
     <input id="wlq" list="tickers" placeholder="Add tickers, e.g. NVDA, AMD" autocomplete="off" autocapitalize="characters" spellcheck="false">
     <button type="submit">Add</button>
@@ -81,9 +113,10 @@
 
 <div id="wrap">
   <canvas id="c"></canvas>
+  <div id="panel"></div>
   <div id="tip"></div>
   <div class="msg" id="msg">Loading market data…</div>
-  <div class="msg" id="empty">Your watchlist is empty.<br>Type a ticker in the bar above and press Add — or hover a tile and press W.</div>
+  <div class="msg" id="empty">This list is empty.<br>Type a ticker in the bar above and press Add — or hover a tile and press W.</div>
   <div class="hint" id="hint">Pick a sector above · add tickers to your watchlist · scroll or pinch to zoom · drag to pan · click a tile to zoom in · double-click to zoom out</div>
 </div>
 
@@ -144,8 +177,10 @@ const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 
 function relayout(){
   if(!stocks.length) return;
-  if(tab==='watch'){
-    const list=watchedStocks(); groups=[]; emptyEl.style.display=list.length?'none':'flex';
+  if(PANELS.includes(tab)){ tiles=[]; groups=[]; emptyEl.style.display='none'; return; }
+  const WL=lists.find(l=>listTabId(l)===tab);
+  if(WL){
+    const list=watchedStocks(WL); groups=[]; emptyEl.style.display=list.length?'none':'flex';
     tiles=squarify(list,0,0,W,H,s=>Math.sqrt(s.c)).map(r=>({s:r.d,x:r.x,y:r.y,w:r.w,h:r.h}));
     return;
   }
@@ -169,24 +204,41 @@ const fmtP=p=>p==null?'—':(p>0?'+':'')+p.toFixed(2)+'%';
 function fmtCap(c){ if(c>=1e12) return '$'+(c/1e12).toFixed(2)+'T'; if(c>=1e9) return '$'+(c/1e9).toFixed(1)+'B'; return '$'+(c/1e6).toFixed(0)+'M'; }
 
 // ---------- Tabs ----------
+const PANELS=['earnings','ipos','news'];
+const listTabId=l=>'wl-'+l.id;
 function buildTabs(){
   const secs = group(stocks,'s').sort((a,b)=>b.c-a.c);
   sectorList = secs.map(g=>({id:slug(g.name), name:g.name, n:g.items.length, p:wavg(g.items)}));
-  const all = {id:'all', name:'All', n:stocks.length, p:wavg(stocks)};
-  const wl = {id:'watch', name:'★ Watchlist', n:watch.length, p:wavg(watchedStocks())};
-  tabsEl.innerHTML = [all,wl,...sectorList].map(t=>{
-    const col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66';
-    return `<button data-id="${t.id}" class="${t.id===tab?'on':''}">${esc(t.name)}<span class="chg" style="color:${col}">${fmtP(t.p)}</span></button>`;
-  }).join('');
+  const items=[{id:'all',name:'All',p:wavg(stocks)}];
+  for(const l of lists) items.push({id:listTabId(l), name:'★ '+l.name, p:wavg(watchedStocks(l))});
+  items.push({id:'earnings',name:'Earnings',lab:earnCount()},{id:'ipos',name:'IPOs',lab:ipoCount()},{id:'news',name:'News',lab:''});
+  items.push(...sectorList);
+  tabsEl.innerHTML = items.map(t=>{
+    let col='#8a94a3', txt='';
+    if(PANELS.includes(t.id)) txt=t.lab; else { col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66'; txt=fmtP(t.p); }
+    return `<button data-id="${esc(t.id)}" class="${t.id===tab?'on':''}">${esc(t.name)}${txt?`<span class="chg" style="color:${col}">${esc(txt)}</span>`:''}</button>`;
+  }).join('') + (newListMode ? `<input id="newlist" placeholder="List name, Enter" maxlength="24" autocomplete="off">` : `<button data-id="__new" class="addtab" title="Create another watchlist">+ List</button>`);
+  const ni=document.getElementById('newlist');
+  if(ni){ ni.focus();
+    ni.addEventListener('keydown',ev=>{ if(ev.key==='Enter') createList(ni.value); else if(ev.key==='Escape'){ newListMode=false; buildTabs(); } });
+    ni.addEventListener('blur',()=>{ if(newListMode && !ni.value.trim()){ newListMode=false; buildTabs(); } }); }
 }
-tabsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; setTab(b.dataset.id); });
+tabsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return;
+  if(b.dataset.id==='__new'){ newListMode=true; buildTabs(); return; }
+  setTab(b.dataset.id); });
+function validTab(id){ return id==='all'||PANELS.includes(id)||lists.some(l=>listTabId(l)===id)||sectorList.some(s=>s.id===id); }
 function setTab(id, keepView){
-  if(!['all','watch',...sectorList.map(s=>s.id)].includes(id)) id='all';
+  if(id==='watch') id=listTabId(lists[0]);
+  if(!validTab(id)) id='all';
   tab=id; hover=null; tip.style.display='none';
-  for(const b of tabsEl.children) b.classList.toggle('on', b.dataset.id===id);
-  const on=tabsEl.querySelector('.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
+  const L=lists.find(l=>listTabId(l)===id); if(L){ activeList=L.id; saveLists(); }
+  const isPanel=PANELS.includes(id);
+  panel.style.display=isPanel?'block':'none'; cv.style.visibility=isPanel?'hidden':'visible';
+  wlBar.style.display=isPanel?'none':'flex'; document.getElementById('hint').style.display=isPanel?'none':'';
+  for(const b of tabsEl.querySelectorAll('button')) b.classList.toggle('on', b.dataset.id===id);
+  const on=tabsEl.querySelector('button.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
   if(!keepView) view={k:1,x:0,y:0};
-  relayout(); clampView(); requestDraw();
+  relayout(); clampView(); requestDraw(); renderWL(); if(isPanel) renderPanel();
   try{ history.replaceState(null,'', id==='all' ? location.pathname : '#'+id); }catch(e){}
 }
 window.addEventListener('hashchange',()=>setTab(location.hash.slice(1)||'all'));
@@ -309,7 +361,7 @@ function doHover(x,y){
     const col=s.p==null?'#aab':s.p>=0?'#6fd6b8':'#ff6b66';
     tip.innerHTML=`<div class="t">${esc(s.t)}</div><div class="n">${esc(s.n)}</div><div class="i">${esc(s.s)} · ${esc(s.i)}</div>`+
       `<div class="p" style="color:${col}">${fmtP(s.p)}</div><div class="m">${s.px!=null?'$'+s.px.toFixed(2)+' · ':''}Mkt cap ${fmtCap(s.c)}</div>`+
-      `<div class="m">${watch.includes(s.t)?'★ In watchlist · press W to remove':'Press W to add to watchlist'}</div>`;
+      `<div class="m">${curList().t.includes(s.t)?'★ In '+esc(curList().name)+' · press W to remove':'Press W to add to '+esc(curList().name)}</div>`;
     tip.style.display='block'; const tw=tip.offsetWidth, th=tip.offsetHeight;
     tip.style.left=Math.min(x+14,W-tw-6)+'px'; tip.style.top=Math.min(y+14,H-th-6)+'px';
   } else tip.style.display='none';
@@ -326,10 +378,10 @@ cv.addEventListener('pointerleave',()=>{ hover=null; tip.style.display='none'; r
 document.getElementById('zin').onclick=()=>zoomCenter(3);
 document.getElementById('zout').onclick=()=>zoomCenter(1/3);
 document.getElementById('reset').onclick=()=>animateTo({k:1,x:0,y:0});
-window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT') return;
+window.addEventListener('keydown',e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
   if((e.key==='w'||e.key==='W')&&hover){ toggleWatch(hover.s.t); return; }
   if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0});
-  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=['all','watch',...sectorList.map(s=>s.id)]; const i=ids.indexOf(tab);
+  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=[...tabsEl.querySelectorAll('button[data-id]')].map(b=>b.dataset.id).filter(x=>x!=='__new'); const i=ids.indexOf(tab);
     setTab(ids[(i+(e.key==='ArrowRight'?1:-1)+ids.length)%ids.length]); } });
 
 // search: jumps to the stock's sector tab, then zooms to it
@@ -346,43 +398,161 @@ q.addEventListener('keydown',e=>{ if(e.key==='Enter') find(); });
 q.addEventListener('change',find);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-// ---------- Watchlist (saved in this browser) ----------
-let watch=[];
-try{ const v=JSON.parse(localStorage.getItem('hm_watch')||'[]'); if(Array.isArray(v)) watch=v.filter(x=>typeof x==='string').slice(0,200); }catch(e){}
-const chipsEl=document.getElementById('chips'), wlq=document.getElementById('wlq');
-function saveWatch(){ try{ localStorage.setItem('hm_watch',JSON.stringify(watch)); }catch(e){} }
-function watchedStocks(){ const m=new Map(stocks.map(s=>[s.t,s])); return watch.map(t=>m.get(t)).filter(Boolean); }
+// ---------- Watchlists (several named lists, saved in this browser) ----------
+let lists=[], activeList=null, newListMode=false;
+try{
+  const v=JSON.parse(localStorage.getItem('hm_lists')||'null');
+  if(v&&Array.isArray(v.lists)){
+    lists=v.lists.filter(l=>l&&typeof l.id==='string'&&typeof l.name==='string'&&Array.isArray(l.t))
+      .map(l=>({id:l.id.replace(/[^a-z0-9]/gi,'')||'x',name:l.name.slice(0,24),t:l.t.filter(x=>typeof x==='string').slice(0,300)}));
+    activeList=v.active;
+  } else {
+    const old=JSON.parse(localStorage.getItem('hm_watch')||'[]');
+    lists=[{id:'main',name:'Watchlist',t:Array.isArray(old)?old.filter(x=>typeof x==='string').slice(0,300):[]}];
+  }
+}catch(e){}
+if(!lists.length) lists=[{id:'main',name:'Watchlist',t:[]}];
+if(!lists.some(l=>l.id===activeList)) activeList=lists[0].id;
+const chipsEl=document.getElementById('chips'), wlq=document.getElementById('wlq'), wlBar=document.getElementById('wl'), listSel=document.getElementById('listsel'), panel=document.getElementById('panel');
+function saveLists(){ try{ localStorage.setItem('hm_lists',JSON.stringify({lists,active:activeList})); }catch(e){} }
+const curList=()=>lists.find(l=>l.id===activeList)||lists[0];
+function watchedStocks(l=curList()){ const m=new Map(stocks.map(s=>[s.t,s])); return l.t.map(t=>m.get(t)).filter(Boolean); }
 function renderWL(){
-  const m=new Map(stocks.map(s=>[s.t,s]));
-  chipsEl.innerHTML=watch.map(t=>{ const s=m.get(t);
+  const L=curList(); const m=new Map(stocks.map(s=>[s.t,s]));
+  listSel.innerHTML=lists.map(l=>`<option value="${esc(l.id)}"${l.id===L.id?' selected':''}>${esc(l.name)} (${l.t.length})</option>`).join('');
+  document.getElementById('dellist').style.display=lists.length>1?'':'none';
+  chipsEl.innerHTML=L.t.map(t=>{ const s=m.get(t);
     const col=!s||s.p==null?'#8a94a3':s.p>=0?'#6fd6b8':'#ff6b66';
     return `<div class="chip" data-t="${esc(t)}"><b>${esc(t)}</b>${s&&s.px!=null?`<span class="px">$${s.px.toFixed(2)}</span>`:''}`+
       `<span style="color:${col}">${s?fmtP(s.p):'n/a'}</span><span class="x" data-x="${esc(t)}" title="Remove">×</span></div>`; }).join('');
 }
-function watchChanged(){
-  saveWatch(); renderWL(); buildTabs();
-  if(tab==='watch'){ relayout(); clampView(); requestDraw(); }
+function listChanged(){
+  saveLists(); renderWL(); if(!newListMode) buildTabs();
+  if(lists.some(l=>listTabId(l)===tab)){ relayout(); clampView(); requestDraw(); }
+  if(PANELS.includes(tab)) renderPanel();
 }
 function addTickers(text){
-  const known=new Set(stocks.map(s=>s.t)); const bad=[]; let added=0;
+  const L=curList(); const known=new Set(stocks.map(s=>s.t)); const bad=[]; let added=0;
   for(let t of text.toUpperCase().split(/[\s,;]+/)){ t=t.replace(/^\$/,''); if(!t) continue;
-    if(!known.has(t)) bad.push(t); else if(!watch.includes(t)){ watch.push(t); added++; } }
-  if(added||!bad.length){ if(tab!=='watch') setTab('watch'); }
-  if(added) watchChanged();
+    if(!known.has(t)) bad.push(t); else if(!L.t.includes(t)){ L.t.push(t); added++; } }
+  if(added||!bad.length){ if(tab!==listTabId(L)) setTab(listTabId(L)); }
+  if(added) listChanged();
   if(bad.length){ wlq.style.borderColor='#d8433f'; wlq.value=bad.join(', '); wlq.title='Not found in the tracked universe: '+bad.join(', ');
     setTimeout(()=>wlq.style.borderColor='',1500); } else wlq.value='';
 }
-function removeTicker(t){ watch=watch.filter(x=>x!==t); watchChanged(); }
-function toggleWatch(t){ watch.includes(t) ? removeTicker(t) : (watch.push(t), watchChanged()); }
+function removeTicker(t,L=curList()){ L.t=L.t.filter(x=>x!==t); listChanged(); }
+function toggleWatch(t,L=curList()){ if(L.t.includes(t)) removeTicker(t,L); else { L.t.push(t); listChanged(); } }
+function createList(name){
+  name=(name||'').trim().slice(0,24); if(!name) return;
+  const l={id:'l'+Date.now().toString(36),name,t:[]}; lists.push(l); activeList=l.id; newListMode=false;
+  saveLists(); buildTabs(); setTab(listTabId(l));
+}
+function renameList(id,name){ const l=lists.find(x=>x.id===id); name=(name||'').trim().slice(0,24); if(!l||!name) return; l.name=name; listChanged(); }
+function deleteList(id){
+  if(lists.length<2) return;
+  const wasHere = tab==='wl-'+id;
+  lists=lists.filter(l=>l.id!==id); if(activeList===id) activeList=lists[0].id;
+  saveLists(); buildTabs();
+  if(wasHere) setTab(listTabId(curList())); else { renderWL(); if(PANELS.includes(tab)) renderPanel(); }
+}
+listSel.onchange=()=>{ activeList=listSel.value; saveLists(); setTab(listTabId(curList())); };
+document.getElementById('renlist').onclick=()=>{ const L=curList(); const n=prompt('Rename list',L.name); if(n!=null) renameList(L.id,n); };
+document.getElementById('dellist').onclick=()=>{ const L=curList(); if(confirm('Delete the list “'+L.name+'”?')) deleteList(L.id); };
 document.getElementById('wlform').addEventListener('submit',e=>{ e.preventDefault(); addTickers(wlq.value); });
 wlq.addEventListener('change',()=>{ if(wlq.value.trim() && stocks.some(s=>s.t===wlq.value.trim().toUpperCase())) addTickers(wlq.value); });
 chipsEl.addEventListener('click',e=>{
   const x=e.target.closest('.x'); if(x){ removeTicker(x.dataset.x); return; }
   const c=e.target.closest('.chip'); if(!c) return;
-  if(tab!=='watch') setTab('watch');
+  if(tab!==listTabId(curList())) setTab(listTabId(curList()));
   const r=tiles.find(t=>t.s.t===c.dataset.t); if(!r) return;
   hideHint(); zoomToRect(r,0.5); flash={r}; setTimeout(()=>{ if(flash&&flash.r===r){ flash=null; requestDraw(); } },3000);
 });
+
+// ---------- Earnings / IPOs / News panels ----------
+let events=null, eventsErr=false, eDate=null, eReported=false, eMine=false, nTag='All';
+const etToday=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+const stockMap=()=>new Map(stocks.map(s=>[s.t,s]));
+const inAnyList=t=>lists.some(l=>l.t.includes(t));
+const DASH='<span class="mut">—</span>';
+const pc=p=>p==null?DASH:`<span class="${p>=0?'up':'dn'}">${fmtP(p)}</span>`;
+const epsF=v=>v==null?DASH:(v<0?'-':'')+'$'+Math.abs(v).toFixed(2);
+const fmtD=iso=>{ const [y,m,d]=iso.split('-').map(Number); return new Date(Date.UTC(y,m-1,d)).toLocaleDateString('en-US',{weekday:'short',month:'numeric',day:'numeric',timeZone:'UTC'}); };
+function earnCount(){ if(!events||!events.earnings) return ''; const d=events.earnings.find(x=>x.date===etToday()); return d?String(d.total):''; }
+function ipoCount(){ return events&&events.ipos&&events.ipos.upcoming.length?String(events.ipos.upcoming.length):''; }
+function agoTxt(iso){ const m=Math.round((Date.now()-new Date(iso))/60000); if(m<1) return 'now'; if(m<60) return m+'m'; if(m<48*60) return Math.round(m/60)+'h'; return new Date(iso).toLocaleDateString([], {month:'short',day:'numeric'}); }
+function starCell(t,known){ if(!known) return '<td class="star"></td>'; const on=curList().t.includes(t);
+  return `<td class="star${on?' on':''}" data-star="${esc(t)}" title="${on?'Remove from':'Add to'} ${esc(curList().name)}">${on?'★':'☆'}</td>`; }
+const SRC={
+  earnings:[['Nasdaq earnings calendar','https://www.nasdaq.com/market-activity/earnings'],['Yahoo Finance calendar','https://finance.yahoo.com/calendar/earnings'],['Earnings Whispers','https://www.earningswhispers.com/calendar'],['SEC EDGAR filings','https://www.sec.gov/edgar/search/']],
+  ipos:[['Nasdaq IPO calendar','https://www.nasdaq.com/market-activity/ipos'],['Renaissance Capital IPO center','https://www.renaissancecapital.com/IPO-Center/Calendar'],['IPOScoop','https://www.iposcoop.com/'],['SEC EDGAR filings','https://www.sec.gov/edgar/search/']],
+  news:[['CNBC Markets','https://www.cnbc.com/markets/'],['Yahoo Finance news','https://finance.yahoo.com/news/'],['MarketWatch','https://www.marketwatch.com/'],['Reuters Markets','https://www.reuters.com/markets/']]
+};
+const srcBox=k=>`<div class="srcs"><b>Good places to dig deeper</b><br>${SRC[k].map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${n} ↗</a>`).join('')}</div>`;
+const evNote=()=>events?`Updated ${agoTxt(events.updated)} ago${events.stale&&events.stale.length?' · some sections could not refresh, showing the last good data':''}`:'';
+
+function renderEarnings(){
+  const days=events.earnings||[]; if(!days.length) return '<div class="note">No earnings data yet.</div>'+srcBox('earnings');
+  if(!eDate||!days.some(d=>d.date===eDate)){ const t=etToday(); eDate=(days.find(d=>d.date>=t)||days[days.length-1]).date; }
+  const day=days.find(d=>d.date===eDate), sm=stockMap(), t0=etToday();
+  let rows=day.rows; if(eReported) rows=rows.filter(r=>r.eps!=null); if(eMine) rows=rows.filter(r=>inAnyList(r.t));
+  const pills=days.map(d=>`<button class="pill${d.date===eDate?' on':''}" data-date="${d.date}">${d.date===t0?'Today':fmtD(d.date)}<small>${d.total}</small></button>`).join('');
+  const when={pre:'Before open',after:'After close','':'Time n/a'};
+  const body=rows.map(r=>{ const s=sm.get(r.t);
+    return `<tr>${starCell(r.t,!!s)}<td><span class="tk" data-tk="${esc(r.t)}">${esc(r.t)}</span></td><td class="n">${esc(r.n)}</td><td class="mut">${when[r.when]}</td>`+
+      `<td class="r">${epsF(r.eps)}</td><td class="r mut">${epsF(r.est)}</td>`+
+      `<td class="r">${r.sur==null?DASH:`<span class="${r.sur>=0?'up':'dn'}">${r.sur>0?'+':''}${r.sur.toFixed(1)}%</span>`}</td>`+
+      `<td class="r">${r.c?fmtCap(r.c):DASH}</td><td class="r">${s?pc(s.p):DASH}</td></tr>`; }).join('');
+  return `<div class="pills">${pills}<label class="chk"><input type="checkbox" id="chkRep"${eReported?' checked':''}> Reported only</label><label class="chk"><input type="checkbox" id="chkMine"${eMine?' checked':''}> My lists only</label></div>`+
+    `<div class="note">Showing ${rows.length} of ${day.total} companies reporting ${esc(fmtD(day.date))}, largest first. EPS and surprise appear once a company has reported. ${esc(evNote())}</div>`+
+    `<div class="tblwrap"><table class="t"><thead><tr><th></th><th>Ticker</th><th>Company</th><th>When</th><th class="r">EPS</th><th class="r">Estimate</th><th class="r">Surprise</th><th class="r">Mkt cap</th><th class="r">Stock today</th></tr></thead><tbody>${body||`<tr><td colspan="9" class="mut" style="padding:20px">Nothing to show with these filters.</td></tr>`}</tbody></table></div>`+srcBox('earnings');
+}
+function renderIpos(){
+  const d=events.ipos; if(!d) return '<div class="note">No IPO data yet.</div>'+srcBox('ipos');
+  const sm=stockMap(); const tk=t=>t?`<span class="tk" data-tk="${esc(t)}">${esc(t)}</span>`:DASH;
+  const up=d.upcoming.map(r=>`<tr><td>${esc(r.date)}</td><td>${tk(r.t)}</td><td class="n">${esc(r.n)}</td><td class="mut">${esc(r.ex)}</td><td class="r">${r.price?'$'+esc(r.price):DASH}</td><td class="r">${esc(r.shares)||DASH}</td><td class="r">${esc(r.amt)||DASH}</td></tr>`).join('');
+  const pr=d.priced.map(r=>{ const s=sm.get(r.t); return `<tr><td>${esc(r.date)}</td><td>${tk(r.t)}</td><td class="n">${esc(r.n)}</td><td class="mut">${esc(r.ex)}</td><td class="r">${r.price?'$'+esc(r.price):DASH}</td><td class="r">${esc(r.shares)||DASH}</td><td class="r">${esc(r.amt)||DASH}</td><td class="r">${s?pc(s.p):DASH}</td></tr>`; }).join('');
+  const fl=d.filed.map(r=>`<tr><td>${esc(r.date)}</td><td>${tk(r.t)}</td><td class="n">${esc(r.n)}</td><td class="r">${esc(r.amt)||DASH}</td></tr>`).join('');
+  const empty=c=>`<tr><td colspan="${c}" class="mut" style="padding:16px">Nothing listed right now.</td></tr>`;
+  return `<div class="note">${esc(evNote())}. Dates and price ranges are expected, not guaranteed; deals can slip or be pulled.</div>`+
+    `<h2>Upcoming (${d.upcoming.length})</h2><div class="tblwrap"><table class="t"><thead><tr><th>Expected date</th><th>Ticker</th><th>Company</th><th>Exchange</th><th class="r">Price range</th><th class="r">Shares</th><th class="r">Offer amount</th></tr></thead><tbody>${up||empty(7)}</tbody></table></div>`+
+    `<h2>Recently priced</h2><div class="tblwrap"><table class="t"><thead><tr><th>Priced</th><th>Ticker</th><th>Company</th><th>Exchange</th><th class="r">Price</th><th class="r">Shares</th><th class="r">Offer amount</th><th class="r">Stock today</th></tr></thead><tbody>${pr||empty(8)}</tbody></table></div>`+
+    `<h2>Newly filed</h2><div class="tblwrap"><table class="t"><thead><tr><th>Filed</th><th>Ticker</th><th>Company</th><th class="r">Proposed amount</th></tr></thead><tbody>${fl||empty(4)}</tbody></table></div>`+srcBox('ipos');
+}
+function renderNews(){
+  const items=events.news||[]; if(!items.length) return '<div class="note">No headlines yet.</div>'+srcBox('news');
+  const tags=['All',...new Set(items.map(i=>i.tag))];
+  const mine=[...new Set(lists.flatMap(l=>l.t))].filter(t=>t.length>=2).slice(0,400);
+  const re=mine.length?new RegExp('(?:^|[^A-Za-z0-9.])('+mine.map(t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')(?![A-Za-z0-9])'):null;
+  const shown=items.filter(i=>nTag==='All'||i.tag===nTag);
+  const rows=shown.map(i=>{ const m=re&&re.exec(i.title);
+    return `<div class="nrow"><span class="tm">${agoTxt(i.ts)}</span><div style="flex:1"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a></div>${m?`<span class="mention" title="Mentions a ticker on one of your lists">★ ${esc(m[1])}</span>`:''}<span class="tag">${esc(i.tag)}</span></div>`; }).join('');
+  return `<div class="pills">${tags.map(t=>`<button class="pill${t===nTag?' on':''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>`+
+    `<div class="note">Headlines from CNBC, newest first; click one to read it on their site. ${esc(evNote())}</div>${rows}`+srcBox('news');
+}
+function renderPanel(){
+  if(!PANELS.includes(tab)) return;
+  if(!events){ panel.innerHTML=`<div class="note">${eventsErr?'Earnings, IPO and news data will appear after the next update run (a few minutes after this feature is first deployed).':'Loading…'}</div>`; return; }
+  const keep=panel.scrollTop;
+  panel.innerHTML = tab==='earnings'?renderEarnings():tab==='ipos'?renderIpos():renderNews();
+  panel.scrollTop=keep;
+}
+panel.addEventListener('click',e=>{
+  const p=e.target.closest('[data-date]'); if(p){ eDate=p.dataset.date; renderPanel(); return; }
+  const g=e.target.closest('[data-tag]'); if(g){ nTag=g.dataset.tag; renderPanel(); return; }
+  const st=e.target.closest('[data-star]'); if(st){ toggleWatch(st.dataset.star); return; }
+  const k=e.target.closest('[data-tk]'); if(k){ q.value=k.dataset.tk; find(); }
+});
+panel.addEventListener('change',e=>{
+  if(e.target.id==='chkRep'){ eReported=e.target.checked; renderPanel(); }
+  if(e.target.id==='chkMine'){ eMine=e.target.checked; renderPanel(); }
+});
+async function loadEvents(){
+  try{
+    const r=await fetch('events.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json(); if(events&&j.updated===events.updated) return;
+    events=j; eventsErr=false; if(stocks.length&&!newListMode) buildTabs(); renderPanel();
+  }catch(e){ if(!events){ eventsErr=true; renderPanel(); } }
+}
 
 // ---------- Data loading + auto-refresh ----------
 function setStatus(){
@@ -413,7 +583,7 @@ async function load(){
 }
 new ResizeObserver(resize).observe(wrap);
 document.fonts&&document.fonts.ready.then(()=>{ for(const s of stocks){ delete s._wt; delete s._wn; } requestDraw(); });
-load(); setInterval(load, REFRESH_MS); setInterval(setStatus, 60000);
+load(); loadEvents(); setInterval(load, REFRESH_MS); setInterval(loadEvents, REFRESH_MS); setInterval(setStatus, 60000);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) load(); });
 setTimeout(hideHint, 9000);
 </script>
