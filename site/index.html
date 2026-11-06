@@ -11,7 +11,7 @@
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:Inter,system-ui,sans-serif; }
   body { display:flex; flex-direction:column; }
-  header { display:flex; align-items:center; gap:14px; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header { display:flex; align-items:center; gap:14px; padding:10px 14px 6px; flex-wrap:wrap; }
   h1 { font-size:16px; font-weight:800; margin:0; }
   .sub { color:var(--muted); font-size:12px; }
   .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#5ec4a9; margin-right:5px; vertical-align:1px; }
@@ -24,6 +24,11 @@
   .zoomlvl { font:600 12px Inter,sans-serif; color:var(--muted); min-width:40px; text-align:center; font-variant-numeric:tabular-nums; }
   .legend { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
   .legend .bar { width:140px; height:10px; border-radius:3px; }
+  nav { display:flex; gap:6px; padding:4px 14px 8px; overflow-x:auto; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+  nav button { flex:none; display:flex; gap:7px; align-items:baseline; padding:6px 11px; border-radius:999px; font-weight:600; color:#c4ccd6; }
+  nav button .chg { font-weight:400; font-size:11px; font-variant-numeric:tabular-nums; }
+  nav button.on { background:#e8ecf1; color:#0f1216; border-color:#e8ecf1; }
+  nav button.on .chg { color:#0f1216 !important; opacity:.75; }
   #wrap { position:relative; flex:1; min-height:300px; margin:8px; border-radius:10px; overflow:hidden; background:#0b0d10; touch-action:none; }
   canvas { display:block; width:100%; height:100%; cursor:grab; }
   canvas.dragging { cursor:grabbing; }
@@ -54,18 +59,19 @@
     <button id="reset">Reset</button>
   </div>
 </header>
+<nav id="tabs"></nav>
 
 <div id="wrap">
   <canvas id="c"></canvas>
   <div id="tip"></div>
   <div class="msg" id="msg">Loading market data…</div>
-  <div class="hint" id="hint">Scroll or pinch to zoom · drag to pan · click a tile to zoom in · double-click to zoom out</div>
+  <div class="hint" id="hint">Pick a sector above · scroll or pinch to zoom · drag to pan · click a tile to zoom in · double-click to zoom out</div>
 </div>
 
 <script>
 const REFRESH_MS = 5 * 60 * 1000;   // re-check data.json every 5 minutes
-const KMAX = 120;
-const HEADER = 13;                  // sector label strip height (world px)
+const KMAX = 80;
+const HEADER = 14;                  // group label strip height (world px)
 
 // ---------- Colors ----------
 function hex(h){ return [1,3,5].map(i=>parseInt(h.slice(i,i+2),16)); }
@@ -93,33 +99,40 @@ function squarify(items, x, y, w, h, val){
 }
 function group(arr,key){ const m=new Map(); for(const s of arr){ const k=s[key]; if(!m.has(k)) m.set(k,{name:k,items:[],c:0}); const g=m.get(k); g.items.push(s); g.c+=s.c; } return [...m.values()]; }
 
-// Sector -> industry -> stock
-function buildLayout(stocks){
-  const tiles=[], sectors=[];
-  for(const sr of squarify(group(stocks,'s'),0,0,W,H,g=>g.c)){
-    const g=sr.d; const hdr = sr.h>HEADER*3 && sr.w>60 ? HEADER : 0;
-    sectors.push({name:g.name,x:sr.x,y:sr.y,w:sr.w,h:sr.h,hdr});
-    for(const ir of squarify(group(g.items,'i'),sr.x+1,sr.y+hdr+1,sr.w-2,sr.h-hdr-2,x=>x.c)){
-      for(const tr of squarify(ir.d.items,ir.x,ir.y,ir.w,ir.h,s=>s.c)){
-        tiles.push({...tr.d, x:tr.x, y:tr.y, w:tr.w, h:tr.h});
-      }
-    }
+// "All" tab: sector boxes (labelled) -> industries -> stocks.
+// Sector tab: industry boxes (labelled) -> stocks.
+function buildLayout(list, labelKey, innerKey){
+  const tiles=[], groups=[];
+  for(const gr of squarify(group(list,labelKey),0,0,W,H,g=>g.c)){
+    const g=gr.d; const hdr = gr.h>HEADER*2.5 && gr.w>50 ? HEADER : 0;
+    groups.push({name:g.name,x:gr.x,y:gr.y,w:gr.w,h:gr.h,hdr,p:wavg(g.items)});
+    const inner = innerKey ? group(g.items,innerKey) : [{items:g.items,c:g.c}];
+    for(const ir of squarify(inner,gr.x+1,gr.y+hdr+1,gr.w-2,gr.h-hdr-2,x=>x.c))
+      for(const tr of squarify(ir.d.items,ir.x,ir.y,ir.w,ir.h,s=>s.c))
+        tiles.push({s:tr.d, x:tr.x, y:tr.y, w:tr.w, h:tr.h});
   }
-  return {tiles, sectors};
+  return {tiles, groups};
 }
+function wavg(items){ let n=0,d=0; for(const s of items) if(s.p!=null){ n+=s.p*s.c; d+=s.c; } return d?n/d:null; }
 
 // ---------- State ----------
 const wrap=document.getElementById('wrap'), cv=document.getElementById('c'), ctx=cv.getContext('2d');
-const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg');
-let W=0,H=0,DPR=1, stocks=[], tiles=[], sectors=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
+const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg'), tabsEl=document.getElementById('tabs');
+let W=0,H=0,DPR=1, stocks=[], tiles=[], groups=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
+let tab='all', sectorList=[];
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 
-function relayout(){ if(!stocks.length) return; ({tiles,sectors}=buildLayout(stocks)); }
+function relayout(){
+  if(!stocks.length) return;
+  if(tab==='all') ({tiles,groups}=buildLayout(stocks,'s','i'));
+  else { const list=stocks.filter(s=>slug(s.s)===tab); ({tiles,groups}=buildLayout(list.length?list:stocks,'i',null)); }
+}
 function resize(){
   const r=wrap.getBoundingClientRect(); const oldW=W, oldH=H;
-  W=r.width; H=r.height; DPR=window.devicePixelRatio||1;
+  W=r.width; H=r.height; DPR=Math.min(2, window.devicePixelRatio||1);
   cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
   if(oldW&&oldH){ view.x*=W/oldW; view.y*=H/oldH; }
-  relayout(); clampView(); draw();
+  relayout(); clampView(); requestDraw();
 }
 function clampView(){
   view.k=Math.max(1,Math.min(KMAX,view.k));
@@ -129,37 +142,72 @@ function clampView(){
 const fmtP=p=>p==null?'—':(p>0?'+':'')+p.toFixed(2)+'%';
 function fmtCap(c){ if(c>=1e12) return '$'+(c/1e12).toFixed(2)+'T'; if(c>=1e9) return '$'+(c/1e9).toFixed(1)+'B'; return '$'+(c/1e6).toFixed(0)+'M'; }
 
-// ---------- Draw ----------
+// ---------- Tabs ----------
+function buildTabs(){
+  const secs = group(stocks,'s').sort((a,b)=>b.c-a.c);
+  sectorList = secs.map(g=>({id:slug(g.name), name:g.name, n:g.items.length, p:wavg(g.items)}));
+  const all = {id:'all', name:'All', n:stocks.length, p:wavg(stocks)};
+  tabsEl.innerHTML = [all,...sectorList].map(t=>{
+    const col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66';
+    return `<button data-id="${t.id}" class="${t.id===tab?'on':''}">${esc(t.name)}<span class="chg" style="color:${col}">${fmtP(t.p)}</span></button>`;
+  }).join('');
+}
+tabsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; setTab(b.dataset.id); });
+function setTab(id, keepView){
+  if(!['all',...sectorList.map(s=>s.id)].includes(id)) id='all';
+  tab=id; hover=null; tip.style.display='none';
+  for(const b of tabsEl.children) b.classList.toggle('on', b.dataset.id===id);
+  const on=tabsEl.querySelector('.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
+  if(!keepView) view={k:1,x:0,y:0};
+  relayout(); clampView(); requestDraw();
+  try{ history.replaceState(null,'', id==='all' ? location.pathname : '#'+id); }catch(e){}
+}
+window.addEventListener('hashchange',()=>setTab(location.hash.slice(1)||'all'));
+
+// ---------- Draw (batched into animation frames) ----------
+let drawQueued=false;
+function requestDraw(){ if(!drawQueued){ drawQueued=true; requestAnimationFrame(()=>{ drawQueued=false; draw(); }); } }
+function textW(s, key, str){ // width of str at 100px, cached on the stock object
+  const k='_w'+key; if(s[k]==null){ ctx.font=(key==='t'?'800':key==='n'?'600':'400')+' 100px Inter,sans-serif'; s[k]=ctx.measureText(str).width/100; } return s[k];
+}
 function draw(){
   ctx.setTransform(DPR,0,0,DPR,0,0); ctx.clearRect(0,0,W,H);
   const {k,x:ox,y:oy}=view;
-  // tiles
+  const labels=[];
+  // pass 1: fills (cheap)
+  let lastFill='';
   for(const r of tiles){
     const sx=r.x*k+ox, sy=r.y*k+oy, sw=r.w*k, sh=r.h*k;
     if(sx>W||sy>H||sx+sw<0||sy+sh<0) continue;
-    const c=colorOf(r.p); ctx.fillStyle=rgb(c);
+    const c=r._c||(r._c=colorOf(r.s.p)); const f=r._f||(r._f=rgb(c));
+    if(f!==lastFill){ ctx.fillStyle=f; lastFill=f; }
     const g = sw>4 && sh>4 ? 1 : 0;
-    ctx.fillRect(sx, sy, Math.max(0.5,sw-g), Math.max(0.5,sh-g));
-    if(sw<20||sh<11) continue;
-    label(r,c,sx,sy,sw,sh);
+    ctx.fillRect(sx, sy, Math.max(0.6,sw-g), Math.max(0.6,sh-g));
+    if(sw>=20 && sh>=11) labels.push([r,c,sx,sy,sw,sh]);
   }
-  // sector frames + headers
-  for(const s of sectors){
+  // pass 2: labels
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  for(const L of labels) label(...L);
+  // group frames + headers
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  for(const s of groups){
     const sx=s.x*k+ox, sy=s.y*k+oy, sw=s.w*k, sh=s.h*k;
     if(sx>W||sy>H||sx+sw<0||sy+sh<0) continue;
     ctx.strokeStyle='#0b0d10'; ctx.lineWidth=2; ctx.strokeRect(sx,sy,sw,sh);
     if(s.hdr){
       const hh=s.hdr*k; ctx.fillStyle='#1a1f26'; ctx.fillRect(sx+1,sy+1,sw-2,hh);
-      const fs=Math.min(13, hh*0.72);
-      if(fs>=7){
+      const fs=Math.min(13, hh*0.7);
+      if(fs>=7 && sw>40){
         ctx.save(); ctx.beginPath(); ctx.rect(sx,sy,sw,hh+1); ctx.clip();
-        ctx.fillStyle='#b8c1cc'; ctx.font=`600 ${fs}px Inter,sans-serif`; ctx.textAlign='left'; ctx.textBaseline='middle';
-        ctx.fillText(s.name.toUpperCase(), Math.max(sx,0)+6, sy+1+hh/2);
+        const tx=Math.max(sx,0)+6, ty=sy+1+hh/2;
+        ctx.font=`600 ${fs}px Inter,sans-serif`; ctx.fillStyle='#b8c1cc';
+        const name=s.name.toUpperCase(); ctx.fillText(name, tx, ty);
+        if(s.p!=null){ const nw=ctx.measureText(name).width; ctx.font=`400 ${fs}px Inter,sans-serif`;
+          ctx.fillStyle=s.p>=0?'#6fd6b8':'#ff6b66'; ctx.fillText(fmtP(s.p), tx+nw+8, ty); }
         ctx.restore();
       }
     }
   }
-  // hover / flash outline
   for(const r of [hover, flash && flash.r]){
     if(!r) continue;
     ctx.strokeStyle = r===hover?'rgba(255,255,255,.9)':'#ffd84d'; ctx.lineWidth= r===hover?2:3;
@@ -168,32 +216,33 @@ function draw(){
   zlvl.textContent=(k<10?k.toFixed(1):Math.round(k))+'×';
 }
 function label(r,c,sx,sy,sw,sh){
+  const s=r.s;
   const vx0=Math.max(sx,0), vy0=Math.max(sy,0), vx1=Math.min(sx+sw,W), vy1=Math.min(sy+sh,H);
   const vw=vx1-vx0, vh=vy1-vy0; if(vw<20||vh<11) return;
-  const pad=Math.min(10,vw*0.08), avail=vw-pad*2;
-  ctx.font='800 100px Inter,sans-serif'; const tW=ctx.measureText(r.t).width/100;
-  const fs=Math.max(6,Math.min(72,avail/tW,vh/2.6)); if(fs<7) return;
-  const pfs=fs*0.6; ctx.font=`400 ${pfs}px Inter,sans-serif`;
-  const showP=vh>fs*2.2 && ctx.measureText(fmtP(r.p)).width<avail;
-  const nfs=Math.max(9,Math.min(16,fs*0.3)); ctx.font=`600 ${nfs}px Inter,sans-serif`;
-  const showN=r.n&&showP&&vh>fs*1.1+pfs*1.5+nfs*2.4&&ctx.measureText(r.n).width<avail;
+  const avail=vw-Math.min(10,vw*0.08)*2;
+  const fs=Math.min(72,avail/textW(s,'t',s.t),vh/2.6); if(fs<7) return;
+  const pStr=fmtP(s.p), pfs=fs*0.6;
+  const showP=vh>fs*2.2 && textW(s,'p'+pStr.length,pStr)*pfs<avail;
+  const nfs=Math.max(9,Math.min(16,fs*0.3));
+  const showN=s.n&&showP&&vh>fs*1.1+pfs*1.5+nfs*2.4&&textW(s,'n',s.n)*nfs<avail;
   const blockH=fs*1.05+(showP?pfs*1.3:0)+(showN?nfs*1.7:0);
   let cy=vy0+vh/2-blockH/2; const tx=vx0+vw/2;
-  ctx.save(); ctx.beginPath(); ctx.rect(sx,sy,sw,sh); ctx.clip();
-  ctx.fillStyle=lum(c)>0.45?'#1d2626':'#fff'; ctx.textAlign='center'; ctx.textBaseline='top';
-  ctx.font=`800 ${fs}px Inter,sans-serif`; ctx.fillText(r.t,tx,cy); cy+=fs*1.05;
-  if(showP){ ctx.font=`400 ${pfs}px Inter,sans-serif`; ctx.fillText(fmtP(r.p),tx,cy+pfs*0.15); cy+=pfs*1.3; }
-  if(showN){ ctx.globalAlpha=.8; ctx.font=`600 ${nfs}px Inter,sans-serif`; ctx.fillText(r.n,tx,cy+nfs*0.5); ctx.globalAlpha=1; }
-  ctx.restore();
+  const clip = sw>W*0.9 || sh>H*0.9 || sx<0 || sy<0; // only clip when the tile is cut off by the screen edge
+  if(clip){ ctx.save(); ctx.beginPath(); ctx.rect(sx,sy,sw,sh); ctx.clip(); }
+  ctx.fillStyle=lum(c)>0.45?'#1d2626':'#fff';
+  ctx.font=`800 ${fs}px Inter,sans-serif`; ctx.fillText(s.t,tx,cy); cy+=fs*1.05;
+  if(showP){ ctx.font=`400 ${pfs}px Inter,sans-serif`; ctx.fillText(pStr,tx,cy+pfs*0.15); cy+=pfs*1.3; }
+  if(showN){ ctx.globalAlpha=.8; ctx.font=`600 ${nfs}px Inter,sans-serif`; ctx.fillText(s.n,tx,cy+nfs*0.5); ctx.globalAlpha=1; }
+  if(clip) ctx.restore();
 }
 
 // ---------- View helpers ----------
 function hit(px,py){ const wx=(px-view.x)/view.k, wy=(py-view.y)/view.k;
   for(const r of tiles) if(wx>=r.x&&wx<r.x+r.w&&wy>=r.y&&wy<r.y+r.h) return r; return null; }
 function zoomAt(px,py,f){ const nk=Math.max(1,Math.min(KMAX,view.k*f));
-  view.x=px-(px-view.x)*(nk/view.k); view.y=py-(py-view.y)*(nk/view.k); view.k=nk; clampView(); draw(); }
+  view.x=px-(px-view.x)*(nk/view.k); view.y=py-(py-view.y)*(nk/view.k); view.k=nk; clampView(); requestDraw(); }
 function clamped(t){ const s={...view}; view={...t}; clampView(); const c={...view}; view=s; return c; }
-function animateTo(target,ms=420){
+function animateTo(target,ms=380){
   if(anim) cancelAnimationFrame(anim); target=clamped(target);
   const from={...view}, t0=performance.now();
   const step=now=>{ let t=Math.min(1,(now-t0)/ms); t=1-Math.pow(1-t,3);
@@ -209,9 +258,10 @@ function zoomCenter(f){ const nk=Math.max(1,Math.min(KMAX,view.k*f)); animateTo(
 function hideHint(){ document.getElementById('hint').style.opacity=0; }
 
 // ---------- Input ----------
-cv.addEventListener('wheel',e=>{ e.preventDefault(); hideHint(); const r=cv.getBoundingClientRect();
+cv.addEventListener('wheel',e=>{ e.preventDefault(); hideHint(); if(anim){cancelAnimationFrame(anim);anim=null;}
+  const r=cv.getBoundingClientRect(); tip.style.display='none';
   zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0018)); },{passive:false});
-const pts=new Map(); let dragStart=null, moved=false, pinch=null, lastTap=0;
+const pts=new Map(); let dragStart=null, moved=false, pinch=null, lastTap=0, hoverQueued=null;
 cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); pts.set(e.pointerId,{x:e.offsetX,y:e.offsetY}); moved=false;
   if(pts.size===1) dragStart={x:e.offsetX,y:e.offsetY,vx:view.x,vy:view.y};
   if(pts.size===2){ const [a,b]=[...pts.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),k:view.k}; } });
@@ -221,16 +271,21 @@ cv.addEventListener('pointermove',e=>{
     zoomAt((a.x+b.x)/2,(a.y+b.y)/2,(pinch.k*d/pinch.d)/view.k); moved=true; hideHint(); return; }
   if(pts.size===1&&dragStart){ const dx=e.offsetX-dragStart.x, dy=e.offsetY-dragStart.y;
     if(Math.abs(dx)+Math.abs(dy)>4){ moved=true; cv.classList.add('dragging'); hideHint(); }
-    if(moved){ view.x=dragStart.vx+dx; view.y=dragStart.vy+dy; clampView(); draw(); } tip.style.display='none'; return; }
-  const h=hit(e.offsetX,e.offsetY); if(h!==hover){ hover=h; draw(); }
-  if(h){
-    const col=h.p==null?'#aab':h.p>=0?'#6fd6b8':'#ff6b66';
-    tip.innerHTML=`<div class="t">${h.t}</div><div class="n">${esc(h.n)}</div><div class="i">${esc(h.s)} · ${esc(h.i)}</div>`+
-      `<div class="p" style="color:${col}">${fmtP(h.p)}</div><div class="m">${h.px!=null?'$'+h.px.toFixed(2)+' · ':''}Mkt cap ${fmtCap(h.c)}</div>`;
-    tip.style.display='block'; const tw=tip.offsetWidth, th=tip.offsetHeight;
-    tip.style.left=Math.min(e.offsetX+14,W-tw-6)+'px'; tip.style.top=Math.min(e.offsetY+14,H-th-6)+'px';
-  } else tip.style.display='none';
+    if(moved){ view.x=dragStart.vx+dx; view.y=dragStart.vy+dy; clampView(); requestDraw(); } tip.style.display='none'; return; }
+  // hover: at most once per frame
+  const first = !hoverQueued; hoverQueued={x:e.offsetX,y:e.offsetY};
+  if(first) requestAnimationFrame(()=>{ const {x,y}=hoverQueued; hoverQueued=null; doHover(x,y); });
 });
+function doHover(x,y){
+  const h=hit(x,y); if(h!==hover){ hover=h; requestDraw(); }
+  if(h){ const s=h.s;
+    const col=s.p==null?'#aab':s.p>=0?'#6fd6b8':'#ff6b66';
+    tip.innerHTML=`<div class="t">${esc(s.t)}</div><div class="n">${esc(s.n)}</div><div class="i">${esc(s.s)} · ${esc(s.i)}</div>`+
+      `<div class="p" style="color:${col}">${fmtP(s.p)}</div><div class="m">${s.px!=null?'$'+s.px.toFixed(2)+' · ':''}Mkt cap ${fmtCap(s.c)}</div>`;
+    tip.style.display='block'; const tw=tip.offsetWidth, th=tip.offsetHeight;
+    tip.style.left=Math.min(x+14,W-tw-6)+'px'; tip.style.top=Math.min(y+14,H-th-6)+'px';
+  } else tip.style.display='none';
+}
 function endPtr(e){ const was=pts.size; pts.delete(e.pointerId); if(pts.size<2) pinch=null;
   if(was===1&&!moved&&e.type==='pointerup'){ const now=performance.now();
     if(now-lastTap<300){ lastTap=0; const nk=view.k/3;
@@ -239,20 +294,25 @@ function endPtr(e){ const was=pts.size; pts.delete(e.pointerId); if(pts.size<2) 
   if(!pts.size){ dragStart=null; cv.classList.remove('dragging'); }
   else if(pts.size===1){ const p=[...pts.values()][0]; dragStart={x:p.x,y:p.y,vx:view.x,vy:view.y}; } }
 cv.addEventListener('pointerup',endPtr); cv.addEventListener('pointercancel',endPtr);
-cv.addEventListener('pointerleave',()=>{ hover=null; tip.style.display='none'; draw(); });
+cv.addEventListener('pointerleave',()=>{ hover=null; tip.style.display='none'; requestDraw(); });
 document.getElementById('zin').onclick=()=>zoomCenter(2);
 document.getElementById('zout').onclick=()=>zoomCenter(0.5);
 document.getElementById('reset').onclick=()=>animateTo({k:1,x:0,y:0});
 window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT') return;
-  if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0}); });
+  if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0});
+  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=['all',...sectorList.map(s=>s.id)]; const i=ids.indexOf(tab);
+    setTab(ids[(i+(e.key==='ArrowRight'?1:-1)+ids.length)%ids.length]); } });
 
-// search
+// search: jumps to the stock's sector tab, then zooms to it
 const q=document.getElementById('q');
 function find(){ const v=q.value.trim().toUpperCase(); if(!v) return;
-  const r=tiles.find(t=>t.t===v) || tiles.find(t=>t.n.toUpperCase().startsWith(v));
-  if(!r){ q.style.borderColor='#d8433f'; setTimeout(()=>q.style.borderColor='',900); return; }
-  q.value=r.t; hideHint(); zoomToRect(r, 0.35);
-  flash={r}; setTimeout(()=>{ if(flash&&flash.r===r){ flash=null; draw(); } },4000); }
+  const s=stocks.find(t=>t.t===v) || stocks.find(t=>t.n.toUpperCase().startsWith(v));
+  if(!s){ q.style.borderColor='#d8433f'; setTimeout(()=>q.style.borderColor='',900); return; }
+  q.value=s.t; hideHint();
+  if(tab!=='all' && slug(s.s)!==tab) setTab(slug(s.s)); else if(tab==='all') setTab(slug(s.s));
+  const r=tiles.find(t=>t.s===s); if(!r) return;
+  zoomToRect(r, 0.35);
+  flash={r}; setTimeout(()=>{ if(flash&&flash.r===r){ flash=null; requestDraw(); } },4000); }
 q.addEventListener('keydown',e=>{ if(e.key==='Enter') find(); });
 q.addEventListener('change',find);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -263,7 +323,7 @@ function setStatus(){
   const d=new Date(meta.updated), mins=Math.round((Date.now()-d)/60000);
   const stale=mins>30;
   const ago = mins<1?'just now': mins<60? `${mins} min ago` : d.toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit', timeZoneName:'short'});
-  statusEl.innerHTML=`<span class="dot${stale?' stale':''}"></span>${meta.count.toLocaleString()} stocks · updated ${ago} · ${esc(meta.source)}, ~15-min delayed`;
+  statusEl.innerHTML=`<span class="dot${stale?' stale':''}"></span>${meta.count.toLocaleString()} stocks · updated ${ago} · ${esc(meta.source)}`;
 }
 async function load(){
   try{
@@ -271,20 +331,24 @@ async function load(){
     if(!res.ok) throw new Error('HTTP '+res.status);
     const j=await res.json();
     if(meta && j.updated===meta.updated){ setStatus(); return; }
+    const first=!meta;
     meta=j; stocks=j.stocks.filter(s=>s.c>0);
-    const keepHover=hover&&hover.t; relayout(); hover=keepHover?tiles.find(t=>t.t===keepHover)||null:null;
-    document.getElementById('tickers').innerHTML=stocks.slice(0,3000).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join('');
-    msg.style.display='none'; setStatus(); draw();
+    const keepHover=hover&&hover.s.t;
+    buildTabs();
+    setTab(first ? (location.hash.slice(1)||'all') : tab, !first);
+    hover=keepHover?tiles.find(t=>t.s.t===keepHover)||null:null;
+    document.getElementById('tickers').innerHTML=stocks.map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join('');
+    msg.style.display='none'; setStatus();
   }catch(e){
     if(!meta){ msg.textContent='Couldn’t load data.json yet — the first GitHub Action run may still be in progress.'; }
     statusEl.textContent = meta ? statusEl.textContent : 'Waiting for data…';
   }
 }
 new ResizeObserver(resize).observe(wrap);
-document.fonts&&document.fonts.ready.then(draw);
+document.fonts&&document.fonts.ready.then(()=>{ for(const s of stocks){ delete s._wt; delete s._wn; } requestDraw(); });
 load(); setInterval(load, REFRESH_MS); setInterval(setStatus, 60000);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) load(); });
-setTimeout(hideHint, 8000);
+setTimeout(hideHint, 9000);
 </script>
 </body>
 </html>
