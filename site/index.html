@@ -260,7 +260,7 @@ function hideHint(){ document.getElementById('hint').style.opacity=0; }
 // ---------- Input ----------
 cv.addEventListener('wheel',e=>{ e.preventDefault(); hideHint(); if(anim){cancelAnimationFrame(anim);anim=null;}
   const r=cv.getBoundingClientRect(); tip.style.display='none';
-  zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0018)); },{passive:false});
+  zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0045)); },{passive:false});
 const pts=new Map(); let dragStart=null, moved=false, pinch=null, lastTap=0, hoverQueued=null;
 cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); pts.set(e.pointerId,{x:e.offsetX,y:e.offsetY}); moved=false;
   if(pts.size===1) dragStart={x:e.offsetX,y:e.offsetY,vx:view.x,vy:view.y};
@@ -295,8 +295,8 @@ function endPtr(e){ const was=pts.size; pts.delete(e.pointerId); if(pts.size<2) 
   else if(pts.size===1){ const p=[...pts.values()][0]; dragStart={x:p.x,y:p.y,vx:view.x,vy:view.y}; } }
 cv.addEventListener('pointerup',endPtr); cv.addEventListener('pointercancel',endPtr);
 cv.addEventListener('pointerleave',()=>{ hover=null; tip.style.display='none'; requestDraw(); });
-document.getElementById('zin').onclick=()=>zoomCenter(2);
-document.getElementById('zout').onclick=()=>zoomCenter(0.5);
+document.getElementById('zin').onclick=()=>zoomCenter(3);
+document.getElementById('zout').onclick=()=>zoomCenter(1/3);
 document.getElementById('reset').onclick=()=>animateTo({k:1,x:0,y:0});
 window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT') return;
   if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0});
