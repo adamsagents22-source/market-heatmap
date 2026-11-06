@@ -29,6 +29,16 @@
   nav button .chg { font-weight:400; font-size:11px; font-variant-numeric:tabular-nums; }
   nav button.on { background:#e8ecf1; color:#0f1216; border-color:#e8ecf1; }
   nav button.on .chg { color:#0f1216 !important; opacity:.75; }
+  #wl { display:flex; gap:7px; align-items:center; padding:7px 14px; overflow-x:auto; scrollbar-width:thin; border-bottom:1px solid var(--line); }
+  #wl form { display:flex; gap:6px; flex:none; }
+  #wl input { width:190px; }
+  .wl-label { color:var(--muted); font-size:11px; font-weight:600; flex:none; letter-spacing:.04em; text-transform:uppercase; }
+  .chip { flex:none; display:flex; align-items:center; gap:7px; padding:4px 6px 4px 11px; border:1px solid var(--line); background:var(--panel); border-radius:999px; font-size:12px; cursor:pointer; font-variant-numeric:tabular-nums; }
+  .chip:hover { border-color:#4a5562; }
+  .chip b { font-weight:800; } .chip .px { color:var(--muted); }
+  .chip .x { width:18px; height:18px; line-height:17px; text-align:center; border-radius:50%; color:var(--muted); font-size:14px; }
+  .chip .x:hover { background:#2a313b; color:#fff; }
+  #empty { display:none; pointer-events:none; }
   #wrap { position:relative; flex:1; min-height:300px; margin:8px; border-radius:10px; overflow:hidden; background:#0b0d10; touch-action:none; }
   canvas { display:block; width:100%; height:100%; cursor:grab; }
   canvas.dragging { cursor:grabbing; }
@@ -60,12 +70,21 @@
   </div>
 </header>
 <nav id="tabs"></nav>
+<div id="wl">
+  <span class="wl-label">★ Watchlist</span>
+  <form id="wlform" autocomplete="off">
+    <input id="wlq" list="tickers" placeholder="Add tickers, e.g. NVDA, AMD" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button type="submit">Add</button>
+  </form>
+  <div id="chips" style="display:contents"></div>
+</div>
 
 <div id="wrap">
   <canvas id="c"></canvas>
   <div id="tip"></div>
   <div class="msg" id="msg">Loading market data…</div>
-  <div class="hint" id="hint">Pick a sector above · scroll or pinch to zoom · drag to pan · click a tile to zoom in · double-click to zoom out</div>
+  <div class="msg" id="empty">Your watchlist is empty.<br>Type a ticker in the bar above and press Add — or hover a tile and press W.</div>
+  <div class="hint" id="hint">Pick a sector above · add tickers to your watchlist · scroll or pinch to zoom · drag to pan · click a tile to zoom in · double-click to zoom out</div>
 </div>
 
 <script>
@@ -120,10 +139,17 @@ const wrap=document.getElementById('wrap'), cv=document.getElementById('c'), ctx
 const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg'), tabsEl=document.getElementById('tabs');
 let W=0,H=0,DPR=1, stocks=[], tiles=[], groups=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
 let tab='all', sectorList=[];
+const emptyEl=document.getElementById('empty');
 const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 
 function relayout(){
   if(!stocks.length) return;
+  if(tab==='watch'){
+    const list=watchedStocks(); groups=[]; emptyEl.style.display=list.length?'none':'flex';
+    tiles=squarify(list,0,0,W,H,s=>Math.sqrt(s.c)).map(r=>({s:r.d,x:r.x,y:r.y,w:r.w,h:r.h}));
+    return;
+  }
+  emptyEl.style.display='none';
   if(tab==='all') ({tiles,groups}=buildLayout(stocks,'s','i'));
   else { const list=stocks.filter(s=>slug(s.s)===tab); ({tiles,groups}=buildLayout(list.length?list:stocks,'i',null)); }
 }
@@ -147,14 +173,15 @@ function buildTabs(){
   const secs = group(stocks,'s').sort((a,b)=>b.c-a.c);
   sectorList = secs.map(g=>({id:slug(g.name), name:g.name, n:g.items.length, p:wavg(g.items)}));
   const all = {id:'all', name:'All', n:stocks.length, p:wavg(stocks)};
-  tabsEl.innerHTML = [all,...sectorList].map(t=>{
+  const wl = {id:'watch', name:'★ Watchlist', n:watch.length, p:wavg(watchedStocks())};
+  tabsEl.innerHTML = [all,wl,...sectorList].map(t=>{
     const col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66';
     return `<button data-id="${t.id}" class="${t.id===tab?'on':''}">${esc(t.name)}<span class="chg" style="color:${col}">${fmtP(t.p)}</span></button>`;
   }).join('');
 }
 tabsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; setTab(b.dataset.id); });
 function setTab(id, keepView){
-  if(!['all',...sectorList.map(s=>s.id)].includes(id)) id='all';
+  if(!['all','watch',...sectorList.map(s=>s.id)].includes(id)) id='all';
   tab=id; hover=null; tip.style.display='none';
   for(const b of tabsEl.children) b.classList.toggle('on', b.dataset.id===id);
   const on=tabsEl.querySelector('.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
@@ -281,7 +308,8 @@ function doHover(x,y){
   if(h){ const s=h.s;
     const col=s.p==null?'#aab':s.p>=0?'#6fd6b8':'#ff6b66';
     tip.innerHTML=`<div class="t">${esc(s.t)}</div><div class="n">${esc(s.n)}</div><div class="i">${esc(s.s)} · ${esc(s.i)}</div>`+
-      `<div class="p" style="color:${col}">${fmtP(s.p)}</div><div class="m">${s.px!=null?'$'+s.px.toFixed(2)+' · ':''}Mkt cap ${fmtCap(s.c)}</div>`;
+      `<div class="p" style="color:${col}">${fmtP(s.p)}</div><div class="m">${s.px!=null?'$'+s.px.toFixed(2)+' · ':''}Mkt cap ${fmtCap(s.c)}</div>`+
+      `<div class="m">${watch.includes(s.t)?'★ In watchlist · press W to remove':'Press W to add to watchlist'}</div>`;
     tip.style.display='block'; const tw=tip.offsetWidth, th=tip.offsetHeight;
     tip.style.left=Math.min(x+14,W-tw-6)+'px'; tip.style.top=Math.min(y+14,H-th-6)+'px';
   } else tip.style.display='none';
@@ -299,8 +327,9 @@ document.getElementById('zin').onclick=()=>zoomCenter(3);
 document.getElementById('zout').onclick=()=>zoomCenter(1/3);
 document.getElementById('reset').onclick=()=>animateTo({k:1,x:0,y:0});
 window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT') return;
+  if((e.key==='w'||e.key==='W')&&hover){ toggleWatch(hover.s.t); return; }
   if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0});
-  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=['all',...sectorList.map(s=>s.id)]; const i=ids.indexOf(tab);
+  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=['all','watch',...sectorList.map(s=>s.id)]; const i=ids.indexOf(tab);
     setTab(ids[(i+(e.key==='ArrowRight'?1:-1)+ids.length)%ids.length]); } });
 
 // search: jumps to the stock's sector tab, then zooms to it
@@ -316,6 +345,44 @@ function find(){ const v=q.value.trim().toUpperCase(); if(!v) return;
 q.addEventListener('keydown',e=>{ if(e.key==='Enter') find(); });
 q.addEventListener('change',find);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---------- Watchlist (saved in this browser) ----------
+let watch=[];
+try{ const v=JSON.parse(localStorage.getItem('hm_watch')||'[]'); if(Array.isArray(v)) watch=v.filter(x=>typeof x==='string').slice(0,200); }catch(e){}
+const chipsEl=document.getElementById('chips'), wlq=document.getElementById('wlq');
+function saveWatch(){ try{ localStorage.setItem('hm_watch',JSON.stringify(watch)); }catch(e){} }
+function watchedStocks(){ const m=new Map(stocks.map(s=>[s.t,s])); return watch.map(t=>m.get(t)).filter(Boolean); }
+function renderWL(){
+  const m=new Map(stocks.map(s=>[s.t,s]));
+  chipsEl.innerHTML=watch.map(t=>{ const s=m.get(t);
+    const col=!s||s.p==null?'#8a94a3':s.p>=0?'#6fd6b8':'#ff6b66';
+    return `<div class="chip" data-t="${esc(t)}"><b>${esc(t)}</b>${s&&s.px!=null?`<span class="px">$${s.px.toFixed(2)}</span>`:''}`+
+      `<span style="color:${col}">${s?fmtP(s.p):'n/a'}</span><span class="x" data-x="${esc(t)}" title="Remove">×</span></div>`; }).join('');
+}
+function watchChanged(){
+  saveWatch(); renderWL(); buildTabs();
+  if(tab==='watch'){ relayout(); clampView(); requestDraw(); }
+}
+function addTickers(text){
+  const known=new Set(stocks.map(s=>s.t)); const bad=[]; let added=0;
+  for(let t of text.toUpperCase().split(/[\s,;]+/)){ t=t.replace(/^\$/,''); if(!t) continue;
+    if(!known.has(t)) bad.push(t); else if(!watch.includes(t)){ watch.push(t); added++; } }
+  if(added||!bad.length){ if(tab!=='watch') setTab('watch'); }
+  if(added) watchChanged();
+  if(bad.length){ wlq.style.borderColor='#d8433f'; wlq.value=bad.join(', '); wlq.title='Not found in the tracked universe: '+bad.join(', ');
+    setTimeout(()=>wlq.style.borderColor='',1500); } else wlq.value='';
+}
+function removeTicker(t){ watch=watch.filter(x=>x!==t); watchChanged(); }
+function toggleWatch(t){ watch.includes(t) ? removeTicker(t) : (watch.push(t), watchChanged()); }
+document.getElementById('wlform').addEventListener('submit',e=>{ e.preventDefault(); addTickers(wlq.value); });
+wlq.addEventListener('change',()=>{ if(wlq.value.trim() && stocks.some(s=>s.t===wlq.value.trim().toUpperCase())) addTickers(wlq.value); });
+chipsEl.addEventListener('click',e=>{
+  const x=e.target.closest('.x'); if(x){ removeTicker(x.dataset.x); return; }
+  const c=e.target.closest('.chip'); if(!c) return;
+  if(tab!=='watch') setTab('watch');
+  const r=tiles.find(t=>t.s.t===c.dataset.t); if(!r) return;
+  hideHint(); zoomToRect(r,0.5); flash={r}; setTimeout(()=>{ if(flash&&flash.r===r){ flash=null; requestDraw(); } },3000);
+});
 
 // ---------- Data loading + auto-refresh ----------
 function setStatus(){
@@ -334,7 +401,7 @@ async function load(){
     const first=!meta;
     meta=j; stocks=j.stocks.filter(s=>s.c>0);
     const keepHover=hover&&hover.s.t;
-    buildTabs();
+    buildTabs(); renderWL();
     setTab(first ? (location.hash.slice(1)||'all') : tab, !first);
     hover=keepHover?tiles.find(t=>t.s.t===keepHover)||null:null;
     document.getElementById('tickers').innerHTML=stocks.map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join('');
