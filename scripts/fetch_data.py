@@ -104,6 +104,51 @@ def build_from_rows(rows):
     return out
 
 
+def apply_live_quotes(stocks):
+    """The screener's prices are the previous close, so fetch live % changes
+    from Nasdaq's watchlist endpoint (max 20 symbols per request)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    chunks = [stocks[i:i + 20] for i in range(0, len(stocks), 20)]
+
+    def fetch(chunk):
+        qs = "&".join("symbol=" + requests.utils.quote(s["t"].lower() + "|stocks") for s in chunk)
+        for attempt in range(3):
+            try:
+                r = requests.get("https://api.nasdaq.com/api/quote/watchlist?" + qs,
+                                 headers=HEADERS, timeout=30)
+                r.raise_for_status()
+                return r.json().get("data") or []
+            except Exception as e:  # noqa: BLE001
+                print(f"watchlist retry {attempt + 1}: {e}", file=sys.stderr)
+                time.sleep(2 * (attempt + 1))
+        return []
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        results = [q for batch in ex.map(fetch, chunks) for q in batch]
+    by_sym = {(q.get("symbol") or "").upper(): q for q in results}
+
+    updated = 0
+    for s in stocks:
+        q = by_sym.get(s["t"])
+        if not q:
+            s["p"] = None  # don't show yesterday's move as today's
+            continue
+        last = num(q.get("lastSalePrice"))
+        prev = num(q.get("previousClosePrice"))
+        pct = num(q.get("percentageChange"))
+        if pct is None and last and prev:
+            pct = (last / prev - 1) * 100
+        if last and s.get("px"):
+            s["c"] = round(s["c"] * last / s["px"])  # screener cap is as of last close
+        if last:
+            s["px"] = round(last, 2)
+        s["p"] = None if pct is None else round(pct, 2)
+        updated += 1
+    print(f"live quotes for {updated}/{len(stocks)} stocks", file=sys.stderr)
+    return updated
+
+
 def from_yfinance_fallback():
     import yfinance as yf
 
@@ -127,9 +172,11 @@ def from_yfinance_fallback():
 
 
 def main():
-    source = "Nasdaq screener"
+    source = "Nasdaq live quotes"
     try:
         stocks = build_from_rows(from_nasdaq())
+        if apply_live_quotes(stocks) < len(stocks) * 0.8:
+            raise RuntimeError("too few live quotes")
     except Exception as e:  # noqa: BLE001
         print(f"{e}; trying yfinance fallback", file=sys.stderr)
         stocks = from_yfinance_fallback()
