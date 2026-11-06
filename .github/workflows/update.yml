@@ -31,6 +31,11 @@ jobs:
           PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           MAX_STOCKS: "2500"
         run: python scripts/fetch_data.py
+      - name: Fetch earnings, IPOs and news
+        continue-on-error: true   # a hiccup here must never block the heatmap itself
+        env:
+          PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: python scripts/fetch_events.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
