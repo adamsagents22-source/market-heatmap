@@ -67,6 +67,14 @@
   .srcs { margin-top:26px; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); line-height:2; }
   .srcs a { color:#9fb4cc; margin-right:16px; white-space:nowrap; }
   .note { color:var(--muted); font-size:11.5px; margin:4px 0 10px; }
+  .bdg { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .bdg.beat { background:rgba(94,196,169,.16); color:#6fd6b8; }
+  .bdg.miss { background:rgba(216,67,63,.18); color:#ff6b66; }
+  .bdg.inline { background:#232a33; color:#aab3bf; }
+  td.exp { cursor:pointer; } td.exp:hover { color:#fff; }
+  tr.hist > td { background:#0e1217; padding:6px 10px 14px 34px; white-space:normal; }
+  .histbox table.t { width:auto; min-width:520px; }
+  .sep { width:1px; height:18px; background:var(--line); margin:0 6px; }
   #empty { display:none; pointer-events:none; }
   #wrap { position:relative; flex:1; min-height:300px; margin:8px; border-radius:10px; overflow:hidden; background:#0b0d10; touch-action:none; }
   canvas { display:block; width:100%; height:100%; cursor:grab; }
@@ -469,7 +477,7 @@ chipsEl.addEventListener('click',e=>{
 });
 
 // ---------- Earnings / IPOs / News panels ----------
-let events=null, eventsErr=false, eDate=null, eReported=false, eMine=false, nTag='All';
+let events=null, eventsErr=false, eDate=null, eReported=false, eMine=false, nTag='Business', eMetric='eps', eRes='all'; const eExp=new Set();
 const etToday=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
 const stockMap=()=>new Map(stocks.map(s=>[s.t,s]));
 const inAnyList=t=>lists.some(l=>l.t.includes(t));
@@ -490,21 +498,56 @@ const SRC={
 const srcBox=k=>`<div class="srcs"><b>Good places to dig deeper</b><br>${SRC[k].map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${n} ↗</a>`).join('')}</div>`;
 const evNote=()=>events?`Updated ${agoTxt(events.updated)} ago${events.stale&&events.stale.length?' · some sections could not refresh, showing the last good data':''}`:'';
 
+const money=n=>n==null?DASH:(n<0?'-':'')+fmtCap(Math.abs(n));
+const pctF=p=>p==null?DASH:`<span class="${p>=0?'up':'dn'}">${p>0?'+':''}${p.toFixed(1)}%</span>`;
+const growth=(a,b)=>(a==null||b==null||b<=0)?null:(a-b)/b*100;
+const METRICS={eps:'EPS',rev:'Revenue',ni:'Net income'};
+const LAB_EPS={beat:'Beat',miss:'Missed',inline:'In line'}, LAB_CHG={beat:'Up',miss:'Down',inline:'Flat'};
+const metricLabels=()=>eMetric==='eps'?LAB_EPS:LAB_CHG;
+function mval(r){
+  if(eMetric==='eps') return {pct:r.eps==null?null:r.sur};
+  const pr=eMetric==='rev'?r.rev:r.ni; if(!pr) return {pct:null};
+  return {cur:pr[0],prev:pr[1],pct:growth(pr[0],pr[1])};
+}
+function resultOf(r){ const p=mval(r).pct; return p==null?null:p>0?'beat':p<0?'miss':'inline'; }
+const badgeF=(res,L=metricLabels())=>res?`<span class="bdg ${res}">${L[res]}</span>`:DASH;
+const epsBadge=p=>p==null?DASH:badgeF(p>0?'beat':p<0?'miss':'inline',LAB_EPS);
+function histRow(r,nc){
+  const h=r.hist||[];
+  if(!h.length) return `<tr class="hist"><td colspan="${nc}" class="mut">No earlier history available for this company.</td></tr>`;
+  const n=h.filter(x=>x[4]!=null).length, beats=h.filter(x=>x[4]!=null&&x[4]>0).length;
+  const lines=[];
+  if(r.rev) lines.push(`Revenue ${money(r.rev[0])} (${pctF(growth(r.rev[0],r.rev[1]))} vs last quarter)`);
+  if(r.ni) lines.push(`Net income ${money(r.ni[0])} (${pctF(growth(r.ni[0],r.ni[1]))} vs last quarter)`);
+  const body=h.map(x=>`<tr><td>${esc(x[0])}</td><td class="mut">${esc(x[1])}</td><td class="r">${epsF(x[2])}</td><td class="r mut">${epsF(x[3])}</td><td class="r">${pctF(x[4])}</td><td>${epsBadge(x[4])}</td></tr>`).join('');
+  return `<tr class="hist"><td colspan="${nc}"><div class="histbox"><div class="note">${esc(r.n)} · EPS vs estimate, last ${h.length} reported quarters${n?` · beat ${beats} of ${n}`:''}${lines.length?'<br>Latest quarter: '+lines.join(' · '):''}</div>`+
+    `<table class="t"><thead><tr><th>Quarter</th><th>Reported</th><th class="r">EPS</th><th class="r">Estimate</th><th class="r">Surprise</th><th>Result</th></tr></thead><tbody>${body}</tbody></table></div></td></tr>`;
+}
 function renderEarnings(){
   const days=events.earnings||[]; if(!days.length) return '<div class="note">No earnings data yet.</div>'+srcBox('earnings');
   if(!eDate||!days.some(d=>d.date===eDate)){ const t=etToday(); eDate=(days.find(d=>d.date>=t)||days[days.length-1]).date; }
-  const day=days.find(d=>d.date===eDate), sm=stockMap(), t0=etToday();
-  let rows=day.rows; if(eReported) rows=rows.filter(r=>r.eps!=null); if(eMine) rows=rows.filter(r=>inAnyList(r.t));
+  const day=days.find(d=>d.date===eDate), sm=stockMap(), t0=etToday(), isEps=eMetric==='eps', L=metricLabels();
+  const reported=day.rows.filter(r=>r.eps!=null);
+  const counts={beat:0,miss:0,inline:0}; for(const r of reported){ const x=resultOf(r); if(x) counts[x]++; }
+  const withRes=counts.beat+counts.miss+counts.inline;
+  let rows=day.rows; if(eReported) rows=rows.filter(r=>r.eps!=null); if(eMine) rows=rows.filter(r=>inAnyList(r.t)); if(eRes!=='all') rows=rows.filter(r=>resultOf(r)===eRes);
   const pills=days.map(d=>`<button class="pill${d.date===eDate?' on':''}" data-date="${d.date}">${d.date===t0?'Today':fmtD(d.date)}<small>${d.total}</small></button>`).join('');
+  const mpills=Object.entries(METRICS).map(([k,n])=>`<button class="pill${k===eMetric?' on':''}" data-metric="${k}">${n}</button>`).join('');
+  const rpills=[['all','All'],['beat',L.beat],['miss',L.miss]].map(([k,n])=>`<button class="pill${k===eRes?' on':''}" data-res="${k}">${n}${k!=='all'?`<small>${counts[k]}</small>`:''}</button>`).join('');
   const when={pre:'Before open',after:'After close','':'Time n/a'};
-  const body=rows.map(r=>{ const s=sm.get(r.t);
-    return `<tr>${starCell(r.t,!!s)}<td><span class="tk" data-tk="${esc(r.t)}">${esc(r.t)}</span></td><td class="n">${esc(r.n)}</td><td class="mut">${when[r.when]}</td>`+
-      `<td class="r">${epsF(r.eps)}</td><td class="r mut">${epsF(r.est)}</td>`+
-      `<td class="r">${r.sur==null?DASH:`<span class="${r.sur>=0?'up':'dn'}">${r.sur>0?'+':''}${r.sur.toFixed(1)}%</span>`}</td>`+
-      `<td class="r">${r.c?fmtCap(r.c):DASH}</td><td class="r">${s?pc(s.p):DASH}</td></tr>`; }).join('');
-  return `<div class="pills">${pills}<label class="chk"><input type="checkbox" id="chkRep"${eReported?' checked':''}> Reported only</label><label class="chk"><input type="checkbox" id="chkMine"${eMine?' checked':''}> My lists only</label></div>`+
-    `<div class="note">Showing ${rows.length} of ${day.total} companies reporting ${esc(fmtD(day.date))}, largest first. EPS and surprise appear once a company has reported. ${esc(evNote())}</div>`+
-    `<div class="tblwrap"><table class="t"><thead><tr><th></th><th>Ticker</th><th>Company</th><th>When</th><th class="r">EPS</th><th class="r">Estimate</th><th class="r">Surprise</th><th class="r">Mkt cap</th><th class="r">Stock today</th></tr></thead><tbody>${body||`<tr><td colspan="9" class="mut" style="padding:20px">Nothing to show with these filters.</td></tr>`}</tbody></table></div>`+srcBox('earnings');
+  const summ = withRes ? `Of ${reported.length} reported: ${counts.beat} ${L.beat.toLowerCase()}, ${counts.miss} ${L.miss.toLowerCase()}${counts.inline?`, ${counts.inline} ${L.inline.toLowerCase()}`:''}.`
+    : reported.length ? 'Numbers for this view are not available yet for these companies.' : 'Nobody has reported yet for this day.';
+  const how = isEps ? 'Beat / Missed compares reported EPS with the analyst consensus estimate.'
+    : METRICS[eMetric]+' is compared with the company’s previous quarter (not analyst estimates, which free sources do not provide). Shown for companies over $2B market cap, within a day or so of their quarterly filing.';
+  const NC=10;
+  const head=isEps?'<th class="r">EPS</th><th class="r">Estimate</th><th class="r">Surprise</th>':`<th class="r">${METRICS[eMetric]}</th><th class="r">Last quarter</th><th class="r">Change</th>`;
+  const body=rows.map(r=>{ const s=sm.get(r.t), m=mval(r), key=day.date+'|'+r.t, open=eExp.has(key), hasH=r.eps!=null;
+    const mid=isEps?`<td class="r">${epsF(r.eps)}</td><td class="r mut">${epsF(r.est)}</td><td class="r">${pctF(r.sur)}</td>`:`<td class="r">${money(m.cur)}</td><td class="r mut">${money(m.prev)}</td><td class="r">${pctF(m.pct)}</td>`;
+    return `<tr>${starCell(r.t,!!s)}<td><span class="tk" data-tk="${esc(r.t)}">${esc(r.t)}</span></td><td class="n${hasH?' exp':''}"${hasH?` data-exp="${esc(key)}" title="Click for the last few quarters"`:''}>${hasH?(open?'▾ ':'▸ '):''}${esc(r.n)}</td><td class="mut">${when[r.when]}</td>${mid}<td>${badgeF(resultOf(r))}</td><td class="r">${r.c?fmtCap(r.c):DASH}</td><td class="r">${s?pc(s.p):DASH}</td></tr>`+(open?histRow(r,NC):''); }).join('');
+  return `<div class="pills">${pills}</div>`+
+    `<div class="pills"><span class="mut" style="font-size:12px">Judge by</span>${mpills}<span class="sep"></span>${rpills}<label class="chk"><input type="checkbox" id="chkRep"${eReported?' checked':''}> Reported only</label><label class="chk"><input type="checkbox" id="chkMine"${eMine?' checked':''}> My lists only</label></div>`+
+    `<div class="note"><b>${esc(summ)}</b> Showing ${rows.length} of ${day.total} companies on ${esc(fmtD(day.date))}, largest first. ${esc(how)} Click a company name for its last few quarters. ${esc(evNote())}</div>`+
+    `<div class="tblwrap"><table class="t"><thead><tr><th></th><th>Ticker</th><th>Company</th><th>When</th>${head}<th>${isEps?'vs estimate':'vs last qtr'}</th><th class="r">Mkt cap</th><th class="r">Stock today</th></tr></thead><tbody>${body||`<tr><td colspan="${NC}" class="mut" style="padding:20px">Nothing to show with these filters.</td></tr>`}</tbody></table></div>`+srcBox('earnings');
 }
 function renderIpos(){
   const d=events.ipos; if(!d) return '<div class="note">No IPO data yet.</div>'+srcBox('ipos');
@@ -520,14 +563,14 @@ function renderIpos(){
 }
 function renderNews(){
   const items=events.news||[]; if(!items.length) return '<div class="note">No headlines yet.</div>'+srcBox('news');
-  const tags=['All',...new Set(items.map(i=>i.tag))];
+  const tags=['Business','All',...new Set(items.map(i=>i.tag).filter(t=>t!=='Business'))];
   const mine=[...new Set(lists.flatMap(l=>l.t))].filter(t=>t.length>=2).slice(0,400);
   const re=mine.length?new RegExp('(?:^|[^A-Za-z0-9.])('+mine.map(t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')(?![A-Za-z0-9])'):null;
-  const shown=items.filter(i=>nTag==='All'||i.tag===nTag);
+  const shown=items.filter(i=>nTag==='All'||(nTag==='Business'?!['General','Top news'].includes(i.tag):i.tag===nTag));
   const rows=shown.map(i=>{ const m=re&&re.exec(i.title);
     return `<div class="nrow"><span class="tm">${agoTxt(i.ts)}</span><div style="flex:1"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a></div>${m?`<span class="mention" title="Mentions a ticker on one of your lists">★ ${esc(m[1])}</span>`:''}<span class="tag">${esc(i.tag)}</span></div>`; }).join('');
   return `<div class="pills">${tags.map(t=>`<button class="pill${t===nTag?' on':''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>`+
-    `<div class="note">Headlines from CNBC, newest first; click one to read it on their site. ${esc(evNote())}</div>${rows}`+srcBox('news');
+    `<div class="note">Headlines from CNBC, newest first; click one to read it on their site. Business hides general news such as politics; All shows everything. ${esc(evNote())}</div>${rows}`+srcBox('news');
 }
 function renderPanel(){
   if(!PANELS.includes(tab)) return;
@@ -539,6 +582,9 @@ function renderPanel(){
 panel.addEventListener('click',e=>{
   const p=e.target.closest('[data-date]'); if(p){ eDate=p.dataset.date; renderPanel(); return; }
   const g=e.target.closest('[data-tag]'); if(g){ nTag=g.dataset.tag; renderPanel(); return; }
+  const mt=e.target.closest('[data-metric]'); if(mt){ eMetric=mt.dataset.metric; renderPanel(); return; }
+  const rs=e.target.closest('[data-res]'); if(rs){ eRes=rs.dataset.res; renderPanel(); return; }
+  const ex=e.target.closest('[data-exp]'); if(ex){ const k=ex.dataset.exp; if(eExp.has(k)) eExp.delete(k); else eExp.add(k); renderPanel(); return; }
   const st=e.target.closest('[data-star]'); if(st){ toggleWatch(st.dataset.star); return; }
   const k=e.target.closest('[data-tk]'); if(k){ q.value=k.dataset.tk; find(); }
 });
