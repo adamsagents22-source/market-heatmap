@@ -39,6 +39,13 @@
   .chip .x { width:18px; height:18px; line-height:17px; text-align:center; border-radius:50%; color:var(--muted); font-size:14px; }
   .chip .x:hover { background:#2a313b; color:#fff; }
   select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; font:600 12px Inter,sans-serif; max-width:170px; }
+  nav#tabs { padding:2px 14px 6px; border-bottom:none; gap:4px; }
+  nav#tabs button { padding:7px 15px; font-size:13px; border-radius:9px; background:transparent; border-color:transparent; }
+  nav#tabs button:hover { background:var(--panel); }
+  nav#tabs button.on { background:#e8ecf1; border-color:#e8ecf1; }
+  nav#subtabs { padding:6px 14px 8px; background:#0c0f13; }
+  nav#subtabs button { padding:4px 10px; font-size:11.5px; }
+  nav#subtabs:empty { display:none; }
   nav button.addtab { color:var(--muted); border-style:dashed; }
   nav input#newlist { width:150px; border-radius:999px; align-self:center; }
   #panel { display:none; position:absolute; inset:0; overflow:auto; background:#0b0d10; padding:14px 16px 40px; }
@@ -107,6 +114,7 @@
   </div>
 </header>
 <nav id="tabs"></nav>
+<nav id="subtabs"></nav>
 <div id="wl">
   <span class="wl-label">★ List</span>
   <select id="listsel" title="Which watchlist you are editing"></select>
@@ -177,7 +185,7 @@ function wavg(items){ let n=0,d=0; for(const s of items) if(s.p!=null){ n+=s.p*s
 
 // ---------- State ----------
 const wrap=document.getElementById('wrap'), cv=document.getElementById('c'), ctx=cv.getContext('2d');
-const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg'), tabsEl=document.getElementById('tabs');
+const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg'), tabsEl=document.getElementById('tabs'), subEl=document.getElementById('subtabs');
 let W=0,H=0,DPR=1, stocks=[], tiles=[], groups=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
 let tab='all', sectorList=[];
 const emptyEl=document.getElementById('empty');
@@ -214,26 +222,36 @@ function fmtCap(c){ if(c>=1e12) return '$'+(c/1e12).toFixed(2)+'T'; if(c>=1e9) r
 // ---------- Tabs ----------
 const PANELS=['earnings','ipos','news'];
 const listTabId=l=>'wl-'+l.id;
+const groupOf=id=>PANELS.includes(id)?id:(String(id).startsWith('wl-')?'lists':'market');
+let lastMarket='all', lastList=null;
 function buildTabs(){
   const secs = group(stocks,'s').sort((a,b)=>b.c-a.c);
   sectorList = secs.map(g=>({id:slug(g.name), name:g.name, n:g.items.length, p:wavg(g.items)}));
-  const items=[{id:'all',name:'All',p:wavg(stocks)}];
-  for(const l of lists) items.push({id:listTabId(l), name:'★ '+l.name, p:wavg(watchedStocks(l))});
-  items.push({id:'earnings',name:'Earnings',lab:earnCount()},{id:'ipos',name:'IPOs',lab:ipoCount()},{id:'news',name:'News',lab:''});
-  items.push(...sectorList);
-  tabsEl.innerHTML = items.map(t=>{
-    let col='#8a94a3', txt='';
-    if(PANELS.includes(t.id)) txt=t.lab; else { col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66'; txt=fmtP(t.p); }
-    return `<button data-id="${esc(t.id)}" class="${t.id===tab?'on':''}">${esc(t.name)}${txt?`<span class="chg" style="color:${col}">${esc(txt)}</span>`:''}</button>`;
-  }).join('') + (newListMode ? `<input id="newlist" placeholder="List name, Enter" maxlength="24" autocomplete="off">` : `<button data-id="__new" class="addtab" title="Create another watchlist">+ List</button>`);
+  const g=groupOf(tab);
+  const pct=t=>{ const col = t.p==null?'#8a94a3':t.p>=0?'#6fd6b8':'#ff6b66'; return {col,txt:fmtP(t.p)}; };
+  const btn=(t,on)=>{ let col='#8a94a3', txt='';
+    if(t.lab!==undefined) txt=t.lab; else if('p' in t){ ({col,txt}=pct(t)); }
+    return `<button data-id="${esc(t.id)}" class="${on?'on':''}">${esc(t.name)}${txt?`<span class="chg" style="color:${col}">${esc(txt)}</span>`:''}</button>`; };
+  const prim=[{id:'market',name:'Market',p:wavg(stocks)},{id:'lists',name:'★ Watchlists',p:lists.length?wavg(watchedStocks(curList())):null},
+    {id:'earnings',name:'Earnings',lab:earnCount()},{id:'ipos',name:'IPOs',lab:ipoCount()},{id:'news',name:'News',lab:''}];
+  tabsEl.innerHTML = prim.map(t=>btn(t,t.id===g)).join('');
+  let sub='';
+  if(g==='market') sub=[{id:'all',name:'All',p:wavg(stocks)},...sectorList].map(t=>btn(t,t.id===tab)).join('');
+  else if(g==='lists') sub=lists.map(l=>btn({id:listTabId(l),name:l.name,p:wavg(watchedStocks(l))},listTabId(l)===tab)).join('')
+    + (newListMode ? `<input id="newlist" placeholder="List name, Enter" maxlength="24" autocomplete="off">` : `<button data-id="__new" class="addtab" title="Create another watchlist">+ List</button>`);
+  subEl.innerHTML=sub;
+  tabsEl.style.borderBottom = sub ? 'none' : '1px solid var(--line)';
   const ni=document.getElementById('newlist');
   if(ni){ ni.focus();
     ni.addEventListener('keydown',ev=>{ if(ev.key==='Enter') createList(ni.value); else if(ev.key==='Escape'){ newListMode=false; buildTabs(); } });
     ni.addEventListener('blur',()=>{ if(newListMode && !ni.value.trim()){ newListMode=false; buildTabs(); } }); }
 }
-tabsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return;
-  if(b.dataset.id==='__new'){ newListMode=true; buildTabs(); return; }
-  setTab(b.dataset.id); });
+function navClick(e){ const b=e.target.closest('button'); if(!b) return; const id=b.dataset.id;
+  if(id==='__new'){ newListMode=true; buildTabs(); return; }
+  if(id==='market') return setTab(validTab(lastMarket)?lastMarket:'all');
+  if(id==='lists') return setTab(validTab(lastList)?lastList:listTabId(curList()));
+  setTab(id); }
+tabsEl.addEventListener('click',navClick); subEl.addEventListener('click',navClick);
 function validTab(id){ return id==='all'||PANELS.includes(id)||lists.some(l=>listTabId(l)===id)||sectorList.some(s=>s.id===id); }
 function setTab(id, keepView){
   if(id==='watch') id=listTabId(lists[0]);
@@ -242,9 +260,10 @@ function setTab(id, keepView){
   const L=lists.find(l=>listTabId(l)===id); if(L){ activeList=L.id; saveLists(); }
   const isPanel=PANELS.includes(id);
   panel.style.display=isPanel?'block':'none'; cv.style.visibility=isPanel?'hidden':'visible';
-  wlBar.style.display=isPanel?'none':'flex'; document.getElementById('hint').style.display=isPanel?'none':'';
-  for(const b of tabsEl.querySelectorAll('button')) b.classList.toggle('on', b.dataset.id===id);
-  const on=tabsEl.querySelector('button.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
+  lastMarket = groupOf(id)==='market' ? id : lastMarket; lastList = groupOf(id)==='lists' ? id : lastList;
+  wlBar.style.display=groupOf(id)==='lists'?'flex':'none'; document.getElementById('hint').style.display=isPanel?'none':'';
+  if(!newListMode) buildTabs();
+  const on=subEl.querySelector('button.on'); on && on.scrollIntoView({block:'nearest',inline:'nearest'});
   if(!keepView) view={k:1,x:0,y:0};
   relayout(); clampView(); requestDraw(); renderWL(); if(isPanel) renderPanel();
   try{ history.replaceState(null,'', id==='all' ? location.pathname : '#'+id); }catch(e){}
@@ -389,7 +408,7 @@ document.getElementById('reset').onclick=()=>animateTo({k:1,x:0,y:0});
 window.addEventListener('keydown',e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
   if((e.key==='w'||e.key==='W')&&hover){ toggleWatch(hover.s.t); return; }
   if(e.key==='+'||e.key==='=') zoomCenter(2); if(e.key==='-') zoomCenter(0.5); if(e.key==='0'||e.key==='Escape') animateTo({k:1,x:0,y:0});
-  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const ids=[...tabsEl.querySelectorAll('button[data-id]')].map(b=>b.dataset.id).filter(x=>x!=='__new'); const i=ids.indexOf(tab);
+  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const src=subEl.querySelector('button[data-id]')?subEl:tabsEl; const ids=[...src.querySelectorAll('button[data-id]')].map(b=>b.dataset.id).filter(x=>x!=='__new'&&x!=='market'&&x!=='lists'); const i=ids.indexOf(tab);
     setTab(ids[(i+(e.key==='ArrowRight'?1:-1)+ids.length)%ids.length]); } });
 
 // search: jumps to the stock's sector tab, then zooms to it
