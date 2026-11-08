@@ -170,39 +170,41 @@ function group(arr,key){ const m=new Map(); for(const s of arr){ const k=s[key];
 // "All" tab: sector boxes (labelled) -> industries -> stocks.
 // Sector tab: industry boxes (labelled) -> stocks.
 function buildLayout(list, labelKey, innerKey){
-  const tiles=[], groups=[];
+  const tiles=[], groups=[], subs=[];
   for(const gr of squarify(group(list,labelKey),0,0,W,H,g=>g.c)){
     const g=gr.d; const hdr = gr.h>HEADER*2.5 && gr.w>50 ? HEADER : 0;
     groups.push({name:g.name,x:gr.x,y:gr.y,w:gr.w,h:gr.h,hdr,p:wavg(g.items)});
     const inner = innerKey ? group(g.items,innerKey) : [{items:g.items,c:g.c}];
-    for(const ir of squarify(inner,gr.x+1,gr.y+hdr+1,gr.w-2,gr.h-hdr-2,x=>x.c))
+    for(const ir of squarify(inner,gr.x+1,gr.y+hdr+1,gr.w-2,gr.h-hdr-2,x=>x.c)){
+      if(innerKey && ir.d.name) subs.push({name:ir.d.name,x:ir.x,y:ir.y,w:ir.w,h:ir.h,g:groups[groups.length-1]});
       for(const tr of squarify(ir.d.items,ir.x,ir.y,ir.w,ir.h,s=>s.c))
         tiles.push({s:tr.d, x:tr.x, y:tr.y, w:tr.w, h:tr.h});
+    }
   }
-  return {tiles, groups};
+  return {tiles, groups, subs};
 }
 function wavg(items){ let n=0,d=0; for(const s of items) if(s.p!=null){ n+=s.p*s.c; d+=s.c; } return d?n/d:null; }
 
 // ---------- State ----------
 const wrap=document.getElementById('wrap'), cv=document.getElementById('c'), ctx=cv.getContext('2d');
 const tip=document.getElementById('tip'), zlvl=document.getElementById('zlvl'), statusEl=document.getElementById('status'), msg=document.getElementById('msg'), tabsEl=document.getElementById('tabs'), subEl=document.getElementById('subtabs');
-let W=0,H=0,DPR=1, stocks=[], tiles=[], groups=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
+let W=0,H=0,DPR=1, stocks=[], tiles=[], groups=[], subs=[], view={k:1,x:0,y:0}, hover=null, flash=null, anim=null, meta=null;
 let tab='all', sectorList=[];
 const emptyEl=document.getElementById('empty');
 const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 
 function relayout(){
   if(!stocks.length) return;
-  if(PANELS.includes(tab)){ tiles=[]; groups=[]; emptyEl.style.display='none'; return; }
+  if(PANELS.includes(tab)){ tiles=[]; groups=[]; subs=[]; emptyEl.style.display='none'; return; }
   const WL=lists.find(l=>listTabId(l)===tab);
   if(WL){
-    const list=watchedStocks(WL); groups=[]; emptyEl.style.display=list.length?'none':'flex';
+    const list=watchedStocks(WL); groups=[]; subs=[]; emptyEl.style.display=list.length?'none':'flex';
     tiles=squarify(list,0,0,W,H,s=>Math.sqrt(s.c)).map(r=>({s:r.d,x:r.x,y:r.y,w:r.w,h:r.h}));
     return;
   }
   emptyEl.style.display='none';
-  if(tab==='all') ({tiles,groups}=buildLayout(stocks,'s','i'));
-  else { const list=stocks.filter(s=>slug(s.s)===tab); ({tiles,groups}=buildLayout(list.length?list:stocks,'i',null)); }
+  if(tab==='all') ({tiles,groups,subs}=buildLayout(stocks,'s','i'));
+  else { const list=stocks.filter(s=>slug(s.s)===tab); ({tiles,groups,subs}=buildLayout(list.length?list:stocks,'i',null)); }
 }
 function resize(){
   const r=wrap.getBoundingClientRect(); const oldW=W, oldH=H;
@@ -294,18 +296,34 @@ function draw(){
   // pass 2: labels
   ctx.textAlign='center'; ctx.textBaseline='top';
   for(const L of labels) label(...L);
-  // group frames + headers
+  // sub-group names (industries on the All tab), pinned to the visible top-left of their box
   ctx.textAlign='left'; ctx.textBaseline='middle';
+  const hbar=g=>{ const hh=Math.min(g.hdr*k,20); const gy=g.y*k+oy; return g.hdr? Math.min(Math.max(gy,0), gy+g.h*k-hh)+hh : Math.max(gy,0); };
+  for(const u of subs){
+    const sx=u.x*k+ox, sy=u.y*k+oy, sw=u.w*k, sh=u.h*k;
+    if(sx>W||sy>H||sx+sw<0||sy+sh<0||sw<110||sh<60) continue;
+    const l=Math.max(sx,0), r2=Math.min(sx+sw,W), top=Math.max(sy,hbar(u.g))+3;
+    if(r2-l<90||top+16>sy+sh||top+16>H) continue;
+    const fs=11; ctx.font=`600 ${fs}px Inter,sans-serif`;
+    const nm=u.name.toUpperCase(); const tw=Math.min(ctx.measureText(nm).width, r2-l-12);
+    ctx.fillStyle='rgba(11,13,16,.72)'; ctx.fillRect(l+3,top,tw+10,16);
+    ctx.save(); ctx.beginPath(); ctx.rect(l+3,top,r2-l-6,16); ctx.clip();
+    ctx.fillStyle='#d5dce5'; ctx.fillText(nm,l+8,top+8.5); ctx.restore();
+  }
+  // group frames + headers (header bar stays pinned to the top of the screen while you're zoomed inside the group)
   for(const s of groups){
     const sx=s.x*k+ox, sy=s.y*k+oy, sw=s.w*k, sh=s.h*k;
     if(sx>W||sy>H||sx+sw<0||sy+sh<0) continue;
     ctx.strokeStyle='#0b0d10'; ctx.lineWidth=2; ctx.strokeRect(sx,sy,sw,sh);
     if(s.hdr){
-      const hh=s.hdr*k; ctx.fillStyle='#1a1f26'; ctx.fillRect(sx+1,sy+1,sw-2,hh);
+      const hh=Math.min(s.hdr*k,20);
+      const top=Math.min(Math.max(sy,0), sy+sh-hh)+1;
+      const l=Math.max(sx,0), r2=Math.min(sx+sw,W), vw=r2-l;
+      ctx.fillStyle='#1a1f26'; ctx.fillRect(l+1,top,Math.max(0,vw-2),hh);
       const fs=Math.min(13, hh*0.7);
-      if(fs>=7 && sw>40){
-        ctx.save(); ctx.beginPath(); ctx.rect(sx,sy,sw,hh+1); ctx.clip();
-        const tx=Math.max(sx,0)+6, ty=sy+1+hh/2;
+      if(fs>=7 && vw>40){
+        ctx.save(); ctx.beginPath(); ctx.rect(l,top,vw,hh+1); ctx.clip();
+        const tx=l+6, ty=top+hh/2;
         ctx.font=`600 ${fs}px Inter,sans-serif`; ctx.fillStyle='#b8c1cc';
         const name=s.name.toUpperCase(); ctx.fillText(name, tx, ty);
         if(s.p!=null){ const nw=ctx.measureText(name).width; ctx.font=`400 ${fs}px Inter,sans-serif`;
